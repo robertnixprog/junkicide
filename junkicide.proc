@@ -1,0 +1,3194 @@
+#Copyright (C) 2013 Robert
+MAINADDR=robertnixprog@github.com
+SECONDADDR=robert@yourcompany.com
+ROOTADDR=root@yourcompany.com
+WHERE=work
+WORKDOMAINS=yourcompany
+TRASHDIR=$HOME
+PROCMAIL_TRASHDIR=$TRASHDIR/procmail
+LOWPRIORITY=$HOME/lowpriority
+PROCMAIL_TRASH=$HOME/spam
+GLOBLOCKFILE=$LOGFILE.lock
+#LOGABSTRACT=yes
+#VERBOSE=on
+
+# used for both this script and SpamBouncer
+
+SPAMMESSIDS=$TRASHDIR/spam.messids
+NASTIESFILE=$HOME/junkicide.proc.nasties
+RAZORFLAGS=""
+
+FROM=`formail -ztrx To:`
+
+:0w
+*FROM??^^\/.+
+{ FROM=$MATCH }
+
+:0w
+*FROM??^foo@bar$
+{ FROM="" }
+
+#FROM=|printenv FROM|perl -w -e '@_=<>;$_=join("",@_);while (s/\n$//) {};s/.*\n//g;print;'
+
+IFBOUNCESSNEAK=""
+
+:0w
+*^from:.*\|[^0-9a-z]*[0-9a-z]+@(sneakemail|snkmail)\.com
+*^x-sneakemail-is-sneakemail:
+*^x-sneakemail-from:
+{
+	#:0hw
+	#FROM1=|formail -zx From:\
+	#       |sed -n 's,^.*[^-._a-zA-Z0-9]\([a-zA-Z0-9][-._+a-zA-Z0-9=+]*@[-_.a-zA-Z0-9]*\.[a-zA-Z]*[a-zA-Z][a-zA-Z]\).*@.*$,\1,p'
+	FROM1=`formail -i From: -R X-Sneakemail-From From|formail -ztrx To:`
+	IFBOUNCESSNEAK="-i Reply-To: -R From: Reply-To: \
+		        -R X-Sneakemail-From: From: -I X-Sneakemail-Label: \
+			-I X-Sneakemail-Keyword: -I X-Sneakemail-Address: \
+			-I X-Sneakemail-Is-Sneakemail: \
+			-I X-Sneakemail-Folder-Path: \
+			-I X-Sneakemail-Rcpt: \
+			-I X-Sneakemail-Return- \
+			-I X-Sneakemail-Inc-Phrase:"
+}
+#FROM=`formail -c -zx From: | sed -e 's, ,,g;s,.*<,,;s,>.*,,;s,(.*),,'`
+
+HDRFILT="-I X-SB -I X-Spam- -I X-Spam: -I X-SpamBouncer: -I X-AntiVirus: \
+         -I X-to: -I X-UIDL: -I X-UID: -I X-Fetchmail- -I MBOX-Line: \
+	 -I Delivered-To: -I X-Loop: -I Return-Path: -I Old- -I X-match: \
+	 -I X-header-match: -I X-forged-from: -I X-Precedence: \
+	 -I X-pstn- -I X-Sonic- $IFBOUNCESSNEAK -I X-DSPAM- \
+	 -I Priority: -I X-DCC- -I X-score -I X-nastiness -I X-Bogosity \
+	 -I Delivery-date: -I Envelope-to: -I X-Keywords: -I X-full \
+	 -I X-HELO- -I Bcc: -I X-SpamBayes -I X-SpamProbe -I Fcc: \
+	 -I X-friends: -I Keywords: -I X-YahooFilteredBulk \
+	 -I X-HASH-Message-Id"
+
+:0w
+*FROM1??^^^^
+{ FROM1=`formail -zrx To:` }
+
+:0w
+*FROM1??^^\/.+
+{ FROM1=$MATCH }
+
+:0w
+*$FROM1??^$FROM$
+{ FROM1="" }
+
+:0w
+*FROM1??^foo@bar$
+{ FROM1="" }
+
+FROM2=""
+:0w
+*^x-from:
+{ FROM2=`formail -zx X-from:\
+	 |sed -e 's,^.*[^-._a-zA-Z0-9]\([a-zA-Z0-9][^@]*@[-_.a-zA-Z0-9]*[.a-zA-Z][a-zA-Z][a-zA-Z]\).*@.*$,\1,'` }
+:Ew
+*^x-sneakemail-address:
+{ FROM2=`formail -zx X-Sneakemail-Address:` }
+
+:0w
+*FROM2??^foo@bar$
+{ FROM2="" }
+
+PRIORITY="D"
+SAVE_TO=""
+
+:0w
+*!^x-sbrule:
+{
+	:0fhw
+	*^x-spam-report:.*[^a-z](invalid_msgid)
+	|formail -q- -a "X-SBRule: empty Message-ID:"
+	:Efhw
+	*^x-spam-report:.*[^a-z](to_empty)
+	|formail -q- -a "X-SBRule: empty To:"
+	:Efhw
+	*^x-spam-report:.*[^a-z](from_(missing|malformed))
+	|formail -q- -a "X-SBRule: empty From:"
+}
+
+VERBOSE=on
+:0c
+*^x-sbrule: *empty ()
+/dev/null
+:Ec
+*!NOLOOP?^^^^
+*$^TO$NOLOOP@
+/dev/null
+:Ew
+*$^TO\/($MAINADDR)
+{
+	SAVE_TO="$MATCH"
+}
+
+:0w
+*BAYESHEAD??^^^^
+{ EXTRAFILTEROUT="-I X-SpamBayes" }
+
+:0fhw
+*SCORE??^^^^
+|formail -q- -I X-Bogosity: $EXTRAFILTEROUT
+
+EXTRAFILTEROUT
+
+:0w
+*$^(x-loop|old-(delivered|envelope)-to): *(mailer-daemon|$MAINADDR)
+*B??.*(x-ifbounce|received):
+{
+	LOCKFILE=$GLOBLOCKFILE
+	LOG="`formail -x X-SBRule: -x X-SBNote: -x X-Spam-Report:`
+"
+	:0Bw
+	*^to: 
+	{ LOG="`formail -f -b -Y -q- -I ''|/bin/grep -i '^to: '|sed -e 's,^, ,'`
+" }
+	:0Bw
+	*^subject: 
+	{ LOG="`formail -f -b -Y -q- -I ''|/bin/grep -i '^subject: '|sed -e 's,^,  ,'`
+" }
+	VERBOSE=off
+	LOG="
+ junk: bounced direct auto-response:
+"
+	:0w
+	*?which fuzzysum
+	{
+		SUBJECT=`formail -x Subject:|cut -c2-71`
+		HASH=`formail -f -b -Y -q- -I ""|(printenv SUBJECT;\
+	        	sed -e '/^-----BEGIN PGP SIGNATURE-----$/d;/^-----END PGP SIGNATURE-----$/d')\
+		        |head -c 100000|fuzzysum -b 61`
+		SUBJECT
+	}
+	:0Bw
+	*.*x-ifbounce: *\/[.a-z0-9]+/[.0-9]+
+	*.*x-loop:
+	{
+		IFBOUNCESPATH=$MATCH
+		IFBOUNCESFILE="`basename $IFBOUNCESPATH`"
+		IFBOUNCESDIR="`dirname $IFBOUNCESPATH`"
+		PROCMAIL_TRASHDIRDIR="`dirname $PROCMAIL_TRASHDIR`"
+		VERBOSE=off
+		LOG=`echo -n '  '; cat "$PROCMAIL_TRASHDIRDIR/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" | formail -X Subject:; cat >/dev/null`
+		LOG="
+"
+		VERBOSE=on
+		#:0icw
+		#|head -20 `dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE 1>&2
+		:0c
+		*?which razor-report
+		|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+		 | razor-report $RAZORFLAGS; cat >/dev/null
+		:0c
+		*?which pyzor
+		|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+		 | pyzor report 2>/dev/null; cat >/dev/null
+		:0c
+		*?which dccproc
+		|[ ! -d /tmp/dccproc ] \
+		 && mkdir /tmp/dccproc; \
+		 cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+		 | dccproc -l /tmp/dccproc; \
+		 cat >/dev/null
+		:0cw:$HOME/.idata.lock
+		*?which ifile
+		|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+		 | formail -f -b -Y -q- -I "From " \
+		 | phrases $HOME/.idata.phrases | ifile -k -S -w -m 100000 -i spam \
+		 && cat >/dev/null
+		:0Bcw:$HOME/.bogofilter.lock
+		*!^x-bogosity: *spam
+		*?which bogofilter
+		|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+		 | bogofilter --multi-token-count=2 -s \
+		 && cat >/dev/null
+		#:Acw:$HOME/.bogofilter1.lock
+		#|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+		# | bogofilter -d $HOME/.bogofilter1 -s \
+		# && cat >/dev/null
+		:0Bc
+		*^x-spamprobe:
+		*^x-spamprobe: *spam
+		/dev/null
+		:Ecw:$HOME/.spamprobe.lock
+		*?which spamprobe
+		|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+		 | spamprobe -Y -Hall train-spam \
+		 && cat >/dev/null
+		:0Bc
+		*^x-dspam
+		*^x-dspam[^:]*:.*\<spam
+		/dev/null
+		:Ecw:$HOME/.dspam.lock
+		*?which dspam
+		|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+		 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+		 && cat >/dev/null
+		:0Bc
+		*^x-spambayes
+		*^x-spambayes[^:]*: *spam
+		/dev/null
+		:Ecw:$HOME/.hammiedb.lock
+		*?which sb_filter.py
+		|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+		 | sb_filter.py -s \
+		 && cat >/dev/null
+		:0w
+		*?which fuzzysum
+		{
+			IFBOUNCEDFILE="`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE"
+			SUBJECT=`formail -f -q- -x Subject: < $IFBOUNCEDFILE|cut -c2-71`
+			HASH=`formail -f -b -Y -q- -I "" < $IFBOUNCEDFILE|(printenv SUBJECT;\
+		        	sed -e '/^-----BEGIN PGP SIGNATURE-----$/d;/^-----END PGP SIGNATURE-----$/d')\
+			        |head -c 100000|fuzzysum -b 61`
+			IFBOUNCEDFILE
+			SUBJECT
+		}
+		:0hcw:$SPAMMESSIDS.lock
+		|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+		 | formail -D 122880 $SPAMMESSIDS; \
+		 formail -D 122880 $SPAMMESSIDS; exit 0
+	}
+	:EBw
+	*^received:
+	{
+		NEWHEAD=`formail -f -b -Y -q- -I "" \
+			 | sed -n 's,^Subject: Re: ,Subject: ,I;/^return-path: /I,/^$/{p;b;};/^received: /I,/^$/p' \
+		         | formail -f -q- $HDRFILT`
+		SUBJECT=`formail -f -b -Y -q- -I "" \
+			 | sed -n 's,^Subject:,,p'|cut -c2-71`
+		HASH=`formail -f -b -Y -q- -I "" \
+		      | sed -n '/^Return-Path: /,$p;/^Received: /,$p' \
+		      | (printenv SUBJECT;\
+	        	 sed -e '/^-----BEGIN PGP SIGNATURE-----$/d;/^-----END PGP SIGNATURE-----$/d')\
+		      |head -c 100000|fuzzysum -b 61`
+		:0bc
+		*?which razor-report
+		|printenv NEWHEAD | razor-report $RAZORFLAGS
+		:0bc
+		*?which pyzor
+		|printenv NEWHEAD | pyzor report 2>/dev/null; cat >/dev/null
+		:0bc
+		*?which dccproc
+		|printenv NEWHEAD | dccproc -l /tmp/dccproc
+		:0bcw:$HOME/.idata.lock
+		*?which ifile
+		|printenv NEWHEAD \
+		 | head -c 100000 \
+		 | formail -f -b -Y -q- -I "From " \
+		 | phrases $HOME/.idata.phrases | ifile -k -S -w -m 100000 -i spam \
+		 && cat >/dev/null
+		:0Bbcw:$HOME/.bogofilter.lock
+		*!^x-bogosity: *spam
+		*?which bogofilter
+		|printenv NEWHEAD \
+		 | head -c 100000 \
+		 | bogofilter --multi-token-count=2 -s \
+		 && cat >/dev/null
+		#:ABbc:$HOME/.bogofilter1.lock
+		#|printenv NEWHEAD \
+		# | head -c 100000 \
+		# | bogofilter -d $HOME/.bogofilter1 -s \
+		# && cat >/dev/null
+		:0Bc
+		*^x-spamprobe:
+		*^x-spamprobe: *spam
+		/dev/null
+		:Ebc:$HOME/.spamprobe.lock
+		*?which spamprobe
+		|printenv NEWHEAD \
+		 | head -c 100000 \
+		 | spamprobe -Y -Hall train-spam \
+		 && cat >/dev/null
+		:0Bc
+		*^x-dspam
+		*^x-dspam[^:]*:.*\<spam
+		/dev/null
+		:Ebc:$HOME/.dspam.lock
+		*?which dspam
+		|printenv NEWHEAD \
+		 | head -c 100000 \
+		 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+		 && cat >/dev/null
+		:0Bc
+		*^x-spambayes
+		*^x-spambayes[^:]*: *spam
+		/dev/null
+		:Ebc:$HOME/.hammiedb.lock
+		*?which sb_filter.py
+		|printenv NEWHEAD \
+		 | head -c 100000 \
+		 | sb_filter.py -s \
+		 && cat >/dev/null
+		:0hcw:$SPAMMESSIDS.lock
+		|printenv NEWHEAD \
+		 | formail -D 122880 $SPAMMESSIDS; \
+		   formail -D 122880 $SPAMMESSIDS; exit 0
+		NEWHEAD
+	}
+	:0w
+	*!HASH??^^^^
+	{
+		# this is wrong; shouldn't be non-spam
+		#:0hcw:$TRASHDIR/procmail_junk.messids.lock
+		#|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+	        #    | formail -D 122880 $TRASHDIR/procmail_junk.messids; \
+		#    cat >/dev/null
+		:0hcw:$SPAMMESSIDS.lock
+		|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+	            | formail -D 122880 $SPAMMESSIDS; \
+		    cat >/dev/null
+	}
+	:0hcw:$TRASHDIR/procmail_junk.messids.lock
+	|formail -D 122880 $TRASHDIR/procmail_junk.messids; exit 0
+	LOCKFILE
+	VERBOSE=off
+	:0:
+	$PROCMAIL_TRASH
+}
+:Ec
+*^FROM_DAEMON
+/dev/null	# don't trust any mailer
+:Ec
+*^x-sbrule: *empty ()
+/dev/null
+# if it's addressed to us and it's someone we know, continue on...
+#|pstn-levels:[^a-z]*s:[^0-9]*0\.0
+:Ec
+*^x-spam-status: *yes
+/dev/null
+:Ew
+*$^subject: cron[ 	]*(:.*|<)$LOGNAME
+*^from: *[^@]*$
+{ PRIORITY="C" }
+:Ew
+*^from data@(sneakemail|snkmail)\.com
+{ PRIORITY="B" }
+
+# NOBOUNCE is used by both SpamBouncer and various processes in here
+NOBOUNCE=$SBDIR/nobounce
+
+:0w
+*PRIORITY??^[^ABC]$
+*NASTINESS??^^^^
+{
+	LOCKFILE=$GLOBLOCKFILE
+	VERBOSE=on
+	#|/bin/cp $TRASHDIR/procmail_junk.messids $TRASHDIR/procmail_junk.messids.$$; formail -D 122880 $TRASHDIR/procmail_junk.messids.$$; RET=$?; /bin/rm $TRASHDIR/procmail_junk.messids.$$; exit $RET
+	:0Wihc:$SPAMMESSIDS.lock
+	*NASTINESS??^^^^
+	*^message-id: *\/[^ ]+
+	|[ -f $SPAMMESSIDS ] && strings -1 $SPAMMESSIDS|/bin/fgrep -x "$MATCH"
+	:aw
+	{
+		VERBOSE=off
+		LOG="
+ junk: repeated spam
+"
+		:0:
+		$PROCMAIL_TRASH
+	}
+	:0ihc
+	*?which dccproc
+	|[ ! -d /tmp/dccproc ] && mkdir /tmp/dccproc
+	# don't know why this is needed 10/12/2007
+	#MOREFROM=""
+	#:0w
+	#*!FROM1??^^^^
+	#{ MOREFROM="\|$FROM1" }
+	#:0w
+	#*!FROM2??^^^^
+	#{ MOREFROM="\|$FROM2" }
+	#*!?set -xv;[ -f $TRASHDIR/procmail_junk.messids ] \
+	#   && strings -1 $TRASHDIR/procmail_junk.messids \
+	#      | /bin/grep -x "$FROM$MOREFROM"
+	VERBOSE=off
+	LOCKFILE
+}
+
+:0w
+*HASH??^^^^
+*?which fuzzysum
+{
+	SUBJECT=`formail -f -q- -x Subject:|cut -c2-71`
+	HASH=`formail -f -b -Y -q- -I ""|(printenv SUBJECT;\
+        	sed -e '/^-----BEGIN PGP SIGNATURE-----$/d;/^-----END PGP SIGNATURE-----$/d')\
+	        |head -c 100000|fuzzysum -b 61`
+	SUBJECT
+}
+
+:0w
+*PRIORITY??^[^ABC]$
+*NASTINESS??^^^^
+{
+	LOCKFILE=$GLOBLOCKFILE
+	VERBOSE=on
+	:0w
+	*!^FROM_DAEMON
+	{
+		:0Wihc:$SPAMMESSIDS.lock
+		*!HASH??^^^^
+		|[ -f $SPAMMESSIDS ] && \
+		 strings -1 $SPAMMESSIDS|/bin/fgrep -x "<$HASH@unknown>"
+		:acw
+		|set -xv;/bin/fgrep -i -x "$FROM" $NOBOUNCE \
+		  || ([ "$FROM1" ] && /bin/fgrep -i -x "$FROM1" $NOBOUNCE) \
+		  || ([ "$FROM2" ] && /bin/fgrep -i -x "$FROM2" $NOBOUNCE)
+		:ew
+		{
+			VERBOSE=off
+			LOG=" junk: repeated hash spam
+"
+			:0cw
+			*?which razor-report
+			|formail -f -b -Y -q- $HDRFILT | razor-report $RAZORFLAGS
+			:0cw
+			*?which pyzor
+			|formail -f -b -Y -q- $HDRFILT | pyzor report 2>/dev/null; cat >/dev/null
+			:0cw
+			*?which dccproc
+			|formail -f -b -Y -q- $IFBOUNCESSNEAK | dccproc -l /tmp/dccproc
+			:0cw:$HOME/.idata.lock
+			*?which ifile
+			|head -c 100000 | formail -f -b -Y -q- -I "From " $HDRFILT \
+			 | phrases $HOME/.idata.phrases \
+			 | ifile -k -S -w -m 100000 -i spam \
+			 && cat >/dev/null
+			:0cw:$HOME/.bogofilter.lock
+			*?which bogofilter
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | bogofilter --multi-token-count=2 -s \
+			 && cat >/dev/null
+			#:Ac:$HOME/.bogofilter1.lock
+			#|head -c 100000 | formail $HDRFILT \
+			# | bogofilter -d $HOME/.bogofilter1 -s \
+			# && cat >/dev/null
+			:0cw:$HOME/.spamprobe.lock
+			*?which spamprobe
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | spamprobe -Y -Hall train-spam \
+			 && cat >/dev/null
+			:0cw:$HOME/.dspam.lock
+			*?which dspam
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+			 && cat >/dev/null
+			# avoid overtraining spambayes -- 10/27/07
+			#:0cw:$HOME/.hammiedb.lock
+			#*?which sb_filter.py
+			#|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			# | sb_filter.py -s \
+			# && cat >/dev/null
+			:0hcw:$SPAMMESSIDS.lock
+			*!HASH??^^^^
+			|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+		            | formail -D 122880 $SPAMMESSIDS; \
+			    cat >/dev/null
+			:0hcw:$SPAMMESSIDS.lock
+			|formail -D 122880 $SPAMMESSIDS; exit 0
+			# this is wrong; this should not be a non-spam
+			#:0hcw:$TRASHDIR/procmail_junk.messids.lock
+			#*^message-id:
+			#|formail -D 122880 $TRASHDIR/procmail_junk.messids; exit 0
+			:0:
+			$PROCMAIL_TRASH
+		}
+	}
+	VERBOSE=off
+	LOCKFILE
+}
+
+REPEATED=no
+:0w
+*PRIORITY??^[^ABC]$
+*NASTINESS??^^^^
+*!x-spambayes[^:]*: *spam
+{
+	LOCKFILE=$GLOBLOCKFILE
+	VERBOSE=on
+	:0Wihc:$TRASHDIR/procmail_junk.messids.lock
+	*^message-id: *\/[^ ]+
+	|[ -f $TRASHDIR/procmail_junk.messids ] && \
+	 strings -1 $TRASHDIR/procmail_junk.messids|/bin/fgrep -x "$MATCH"
+	:aw
+	{
+		VERBOSE=off
+		LOG="
+ repeated message
+"
+		REPEATED=yes
+		:0hfw
+		|formail -f -q- -i "X-match: repeated"
+	}
+	:0Wihc:$TRASHDIR/procmail_junk.messids.lock
+	*!HASH??^^^^
+	|[ -f $TRASHDIR/procmail_junk.messids ] && \
+	 strings -1 $TRASHDIR/procmail_junk.messids|/bin/fgrep -x "<$HASH@unknown>"
+	:aw
+	{
+		VERBOSE=off
+		LOG=" repeated hash
+"
+		:0hcw:$TRASHDIR/procmail_junk.messids.lock
+		*^message-id:
+		|formail -D 122880 $TRASHDIR/procmail_junk.messids; exit 0
+		REPEATED=yes
+		:0hfw
+		|formail -f -q- -i "X-match: repeated hash"
+	}
+	VERBOSE=off
+	LOCKFILE
+}
+
+:0w
+*PRIORITY??^[^ABC]$
+*!REPEATED??yes
+{
+	LOCKFILE=$GLOBLOCKFILE
+	VERBOSE=on
+	FILENO1=$FILENO
+	ORIGTRAP=$TRAP
+	#PREVTRAP=""
+	#:0w
+	#*!TRAP??^^^^
+	#{ PREVTRAP="; $TRAP" ORIGTRAP=$TRAP }
+	#TRAP='[ "$EXITCODE" = 0 ]'" \
+	#      && lockfile -l60 $TRASHDIR/procmail_junk.messids.lock\
+	#      && (head -c 100000 \
+	#	   | formail -D 122880 $TRASHDIR/procmail_junk.messids\
+	#	  || true) \
+	#      && /bin/rm -f $TRASHDIR/procmail_junk.messids.lock$PREVTRAP"
+	#PREVTRAP
+	#:0w
+	#*NASTINESS??^^^^
+	#*!HASH??^^^^
+	#{
+	#	#          [ -z '$SAVE_TO' ] && \
+	#	# this statement must occur after above setting of TRAP
+	#	# because TRAP must be non-empty
+	#	TRAP="$TRAP; "'[ "$EXITCODE" = 0 -a "$RESPOND" != yes ]'" \
+	#	      && lockfile -l60 $TRASHDIR/procmail_junk.messids.lock\
+	#	      && (formail -f -b -Y -q- -I 'Message-ID: <$HASH@unknown>' </dev/null\
+	#	            | formail -D 122880 $TRASHDIR/procmail_junk.messids \
+	#		  || true) \
+	#	      && /bin/rm -f $TRASHDIR/procmail_junk.messids.lock"
+	#}
+	:0fhw
+	*SCORE??^^^^
+	|formail -i X-Loop: -I X-ifbounce: -i Old-Delivered-To: \
+		 -i Old-Envelope-To:
+	NASTINESS=0
+	FROM_MAILER_DAEMON=no
+	:0w
+	# this regex is a modified/expanded FROM_MAILER/FROM_DAEMON
+	*(^\/((((Resent-)?(From\
+|Sender)|X-Envelope-From):|>?From )([^>]*[^(.%@a-z0-9])?\
+(pineapp-notify|Post(ma?(st(e?r)?|n)|office)|(send)?Mail(er)?\
+|sysadmin|daemon|m(mdf|ajordomo)|n?uucp|LIST(SERV|proc)|NETSERV\
+|o(wner|ps)|r(e(quest|sponse))|bbs\.smtp|echo\
+|mirror|s(erv(ices|er)|mtp(error)?|ystem)\
+|A(dmin(istrator)?|MMGR|utoanswer)|notify@yahoogroups\.com)(([^).!:a-z0-9][-_a-z0-9]*)?\
+[%@>\t ][^<)]*(\(.*\).*)?)?$([^>]|$))\
+|^TO\/mailer-daemon@|^\/x-(sbpass|spam-report):.*[^a-z](abuse|mailer[-_]daemon))
+	{
+		LOG="`printenv MATCH | sed -e 's,^, ,'; cat >/dev/null`
+"
+		:0Bw
+		*.*x-loop: *mailer-daemon
+		{
+			VERBOSE=off
+			LOG="`formail -f -q- -x X-SBRule: -x X-SBNote: -x X-Spam-Report:`
+"
+			:0Bw
+			*^to: 
+			{ LOG="`formail -f -b -Y -q- -I ''|/bin/grep -i '^to: '|sed -e 's,^, ,' && echo ""`
+"                       }
+			:0Bw
+			*^subject: 
+			{ LOG="`formail -f -b -Y -q- -I ''|/bin/grep -i '^subject: '|sed -e 's,^,  ,'`
+"                       }
+			LOG="junk: simulated bounce bounced mailer-daemon auto-response:
+"
+			:0:
+			$PROCMAIL_TRASH
+		}
+		:EBw
+		*$.*x-loop: *($MAINADDR)
+		{
+			VERBOSE=off
+			LOG=`formail -f -q- -x X-SBRule: -x X-SBNote: -x X-Spam-Report:`
+			LOG="
+"
+			:0Bw
+			*^to: 
+			{
+				LOG="`formail -f -b -Y -q- -I ''|/bin/grep -i '^to: '|sed -e 's,^, ,'`
+"
+			}
+			:0Bw
+			*^subject: 
+			{
+				LOG="`formail -f -b -Y -q- -I ''|/bin/grep -i '^subject: '|sed -e 's,^,  ,'`
+"
+			}
+			:0Bw
+			*.*x-ifbounce: *\/[.a-z0-9]+/[.0-9]+
+			*.*x-loop:
+			{
+				IFBOUNCESPATH=$MATCH
+				IFBOUNCESFILE="`basename $IFBOUNCESPATH`"
+				IFBOUNCESDIR="`dirname $IFBOUNCESPATH`"
+				PROCMAIL_TRASHDIRDIR="`dirname $PROCMAIL_TRASHDIR`"
+				LOG=`echo -n '  '; \
+				     cat "$PROCMAIL_TRASHDIRDIR/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+				     | formail -f -q- -X Subject:`
+				LOG="
+ junk: bounced mailer-daemon auto-response:
+"
+				#:0icw
+				#|head -20 `dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE 1>&2
+				:0c
+				*?which razor-report
+				|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+				 | razor-report $RAZORFLAGS; cat >/dev/null
+				:0c
+				*?which pyzor
+				|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+				 | pyzor report 2>/dev/null; cat >/dev/null
+				:0c
+				*?which dccproc
+				|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+				 | dccproc -l /tmp/dccproc; \
+				 cat >/dev/null
+				:0cw
+				*?which ifile
+				|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+				 | formail -f -b -Y -q- -I "From " \
+				 | phrases $HOME/.idata.phrases \
+				 | ifile -k -S -w -m 100000 -i spam \
+				 && cat >/dev/null
+				:0Bcw:$HOME/.bogofilter.lock
+				*!^x-bogosity: *spam
+				*?which bogofilter
+				|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+				 | bogofilter --multi-token-count=2 -s \
+				 && cat >/dev/null
+				#:ABcw:$HOME/.bogofilter1.lock
+				#|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+				# | bogofilter -d $HOME/.bogofilter1 -s \
+				# && cat >/dev/null
+				:0Bc
+				*^x-spamprobe:
+				*^x-spamprobe: *spam
+				/dev/null
+				:Ecw:$HOME/.spamprobe.lock
+				*?which spamprobe
+				|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+				 | spamprobe -Y -Hall train-spam \
+				 && cat >/dev/null
+				:0Bc
+				*^x-dspam
+				*^x-dspam[^:]*:.*\<spam
+				/dev/null
+				:Ecw:$HOME/.dspam.lock
+				*?which dspam
+				|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+				 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+				 && cat >/dev/null
+				:0Bc
+				*^x-spambayes
+				*^x-spambayes[^:]*: *spam
+				/dev/null
+				:Ecw:$HOME/.hammiedb.lock
+				*?which sb_filter.py
+				|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+				 | sb_filter.py -s \
+				 && cat >/dev/null
+				:0w
+				*?which fuzzysum
+				{
+					IFBOUNCEDFILE="`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE"
+					SUBJECT=`formail -f -q- -x Subject: < $IFBOUNCEDFILE|cut -c2-71`
+					HASH=`formail -f -b -Y -q- -I "" < $IFBOUNCEDFILE|(printenv SUBJECT;\
+				        	sed -e '/^-----BEGIN PGP SIGNATURE-----$/d;/^-----END PGP SIGNATURE-----$/d')\
+					        |head -c 100000|fuzzysum -b 61`
+					IFBOUNCEDFILE
+					SUBJECT
+				}
+				:0hcw:$SPAMMESSIDS.lock
+				|cat "`dirname $PROCMAIL_TRASHDIR`/$IFBOUNCESDIR/procmail_junk.$IFBOUNCESFILE" \
+				    | formail -D 122880 $SPAMMESSIDS; \
+				    formail -D 122880 $SPAMMESSIDS; exit 0
+			}
+			:EBw
+			*^received:
+			{
+				LOG=" junk: mailer-daemon spam with received:
+"
+				NEWHEAD=`formail -f -b -Y -q- -I "" \
+					 | sed -n 's,^Subject: Re: ,Subject: ,I;/^return-path: /I,/^$/{p;b;};/^received: /I,/^$/p' \
+				         | formail -f -b -Y -q- $HDRFILT`
+				:0bc
+				*?which razor-report
+				|(printenv NEWHEAD; echo ""; sed -n 's,^>,,p;/^Return-Path: /,$p;/^Received: /,$p') \
+				 | razor-report $RAZORFLAGS
+				:0bc
+				*?which pyzor
+				|(printenv NEWHEAD; echo ""; sed -n 's,^>,,p;/^Return-Path: /,$p;/^Received: /,$p') \
+				 | pyzor report 2>/dev/null; cat >/dev/null
+				:0bc
+				*?which dccproc
+				|(printenv NEWHEAD; echo ""; sed -n 's,^>,,p;/^Return-Path: /,$p;/^Received: /,$p') \
+				 | dccproc -l /tmp/dccproc
+				:0bcw:$HOME/.idata.lock
+				*?which ifile
+				|(printenv NEWHEAD; echo ""; sed -n 's,^>,,p;/^Return-Path: /,$p;/^Received: /,$p') \
+				 | head -c 100000 \
+				 | formail -f -b -Y -q- -I "From " \
+				 | phrases $HOME/.idata.phrases \
+				 | ifile -k -S -w -m 100000 -i spam \
+				 && cat >/dev/null
+				:0Bbc:$HOME/.bogofilter.lock
+				*!^x-bogosity: *spam
+				*?which bogofilter
+				|(printenv NEWHEAD; echo ""; sed -n 's,^>,,p;/^Return-Path: /,$p;/^Received: /,$p') \
+				 | head -c 100000 \
+				 | bogofilter --multi-token-count=2 -s \
+				 && cat >/dev/null
+				#:ABbc:$HOME/.bogofilter1.lock
+				#|(printenv NEWHEAD; echo ""; sed -n 's,^>,,p;/^Return-Path: /,$p;/^Received: /,$p') \
+				# | head -c 100000 \
+				# | bogofilter -d $HOME/.bogofilter1 -s \
+				# && cat >/dev/null
+				:0Bc
+				*^x-spamprobe:
+				*^x-spamprobe: *spam
+				/dev/null
+				:Ebc:$HOME/.spamprobe.lock
+				*?which spamprobe
+				|(printenv NEWHEAD; echo ""; sed -n 's,^>,,p;/^Return-Path: /,$p;/^Received: /,$p') \
+				 | head -c 100000 \
+				 | spamprobe -Y -Hall train-spam \
+				 && cat >/dev/null
+				:0Bc
+				*^x-dspam:
+				*^x-dspam[^:]*:.*\<spam
+				/dev/null
+				:Ebc:$HOME/.dspam.lock
+				*?which dspam
+				|(printenv NEWHEAD; echo ""; sed -n 's,^>,,p;/^Return-Path: /,$p;/^Received: /,$p') \
+				 | head -c 100000 \
+				 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+				 && cat >/dev/null
+				:0Bc
+				*^x-spambayes
+				*^x-spambayes[^:]*: *spam
+				/dev/null
+				:Ebc:$HOME/.hammiedb.lock
+				*?which sb_filter.py
+				|(printenv NEWHEAD; echo ""; sed -n 's,^>,,p;/^Return-Path: /,$p;/^Received: /,$p') \
+				 | head -c 100000 \
+				 | sb_filter.py -s \
+				 && cat >/dev/null
+				:0w
+				*?which fuzzysum
+				{
+					SUBJECT=`formail -f -b -Y -q- -I "" \
+						 | sed -n 's,^Subject:,,p'|cut -c2-71`
+					HASH=`formail -f -b -Y -q- -I "" \
+					      | sed -n '/^Return-Path: /,$p;/^Received: /,$p' \
+					      | (printenv SUBJECT;\
+				        	 sed -e '/^-----BEGIN PGP SIGNATURE-----$/d;/^-----END PGP SIGNATURE-----$/d')\
+					      |head -c 100000|fuzzysum -b 61`
+					SUBJECT
+				}
+				:0hcw:$SPAMMESSIDS.lock
+				|printenv NEWHEAD \
+				 | formail -D 122880 $SPAMMESSIDS; \
+				   formail -D 122880 $SPAMMESSIDS; exit 0
+				NEWHEAD
+			}
+			:0w
+			*!HASH??^^^^
+			{
+				# this is wrong; it may not be a non-spam
+				#:0hcw:$TRASHDIR/procmail_junk.messids.lock
+				#|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+			        #    | formail -D 122880 $TRASHDIR/procmail_junk.messids; \
+				#    cat >/dev/null
+				:0hcw:$SPAMMESSIDS.lock
+				|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+			            | formail -D 122880 $SPAMMESSIDS; \
+				    cat >/dev/null
+			}
+			:0:
+			$PROCMAIL_TRASH
+		}
+		TRASHMAILER=no
+		:0w
+		*RESPOND??^^^^
+		*SAVE_TO??^$
+		{ TRASHMAILER=yes }
+		:EBw
+		*RESPOND??^^^^
+		*$!^from:.*[^_a-z0-9]($MAINADDR)
+		{ TRASHMAILER=yes }
+		:0w
+		*!TRASHMAILER??no
+		{
+			VERBOSE=off
+			LOG="`formail -f -q- -x X-Spam-Report: -x X-SpamBayes -x X-pstn-levels:`
+"
+			LOG=" `formail -f -b -Y -q- -I ''|/bin/grep -i '^to: '|head -1`
+"
+			LOG="  `formail -f -b -Y -q- -I ''|/bin/grep -i '^subject: '|head -1`
+"
+			LOG=" junk: mailer-daemon spam
+"
+			:0cw
+			*?which razor-report
+			|formail -f -b -Y -q- $HDRFILT | razor-report $RAZORFLAGS
+			:0cw
+			*?which pyzor
+			|formail -f -b -Y -q- $HDRFILT | pyzor report 2>/dev/null; cat >/dev/null
+			:0cw
+			*?which dccproc
+			|formail -f -b -Y -q- $IFBOUNCESSNEAK | dccproc -l /tmp/dccproc
+			:0cw:$HOME/.idata.lock
+			*?which ifile
+			|head -c 100000 | formail -f -b -Y -q- -I "From " $HDRFILT \
+			 | phrases $HOME/.idata.phrases \
+			 | ifile -k -S -w -m 100000 -i spam \
+			 && cat >/dev/null
+			:0cw:$HOME/.bogofilter.lock
+			*!^x-bogosity: *spam
+			*?which bogofilter
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | bogofilter --multi-token-count=2 -s \
+			 && cat >/dev/null
+			#:Acw:$HOME/.bogofilter1.lock
+			#|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			# | bogofilter -d $HOME/.bogofilter1 -s \
+			# && cat >/dev/null
+			:0c
+			*^x-spamprobe:
+			*^x-spamprobe: *spam
+			/dev/null
+			:Ecw:$HOME/.spamprobe.lock
+			*?which spamprobe
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | spamprobe -Y -Hall train-spam \
+			 && cat >/dev/null
+			:0c
+			*^x-dspam:
+			*^x-dspam[^:]*:.*\<spam
+			/dev/null
+			:Ecw:$HOME/.dspam.lock
+			*?which dspam
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+			 && cat >/dev/null
+			:0c
+			*^x-spambayes
+			*^x-spambayes[^:]*: *spam
+			/dev/null
+			:Ecw:$HOME/.hammiedb.lock
+			*?which sb_filter.py
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | sb_filter.py -s \
+			 && cat >/dev/null
+			:0hcw:$SPAMMESSIDS.lock
+			*!HASH??^^^^
+			|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+		            | formail -D 122880 $SPAMMESSIDS; \
+			    cat >/dev/null
+			:0hcw:$SPAMMESSIDS.lock
+			|formail -D 122880 $SPAMMESSIDS; exit 0
+			:0:
+			$PROCMAIL_TRASH
+		}
+		VERBOSE=on
+		FROM_MAILER_DAEMON=yes
+	}
+	:0w
+	*BAYESHEAD??^^^^
+	*?which sb_filter.py
+	{
+		BAYESHEAD="`(head -c 100000; cat >/dev/null) \
+			    | formail -f -b -Y -q- $HDRFILT \
+			    | sb_filter.py -f \
+			    | (formail -f -q- -X X-SpamBayes; cat >/dev/null)`"
+		:0fhw
+		*!BAYESHEAD??^^^^
+		|formail -q- -i "$BAYESHEAD"
+	}
+	:0w
+	*PROBE??^^^^
+	*!x-spam-status: *yes
+	*?which spamprobe
+	{
+		PROBE="`head -c 100000 | formail -f -b -Y -q- $HDRFILT | spamprobe -l .8 -R score`"
+		:0hfw
+		*PROBE??spam *\/0*\.(8|9[1-8]).*
+		|formail -f -q- -i "X-SpamProbe: UNSURE $MATCH"
+		:Efhw
+		*!PROBE??^^^^
+		|formail -q- -i "X-SpamProbe: $PROBE"
+		#*^x-spamprobe: *good *\/[.0-9]+
+		#*?set -xv;echo $MATCH'*1000'|bc|sed -e 's,\..*,,'|xargs -t -i test '{}' -ge 300
+	}
+	:0w
+	*DSPAM??^^^^
+	*!x-spam-status: *yes
+	*?which dspam
+	{
+		DSPAM="`head -c 100000 | formail -f -b -Y -q- $HDRFILT | dspam --user $LOGNAME --stdout --mode=notrain --classify`"
+		:0fhw
+		*!DSPAM??^^^^
+		|formail -q- -i "$DSPAM"
+	}
+	:0w
+	*BOGOHEAD??^^^^
+	*!x-(spam-status: *yes|spamprobe: *spam|dspam[^:]*:.*\<spam)
+	*?which bogofilter
+	{
+		BOGOHEAD="`head -c 100000 | formail -f -b -Y -q- $HDRFILT | bogofilter --multi-token-count=2 -v`"
+		:0fhw
+		*!BOGOHEAD??^^^^
+		|formail -q- -i "$BOGOHEAD"
+	}
+	SAVE_MATCH=""
+	:0w
+	*PRIORITY??^[^AB]$
+	*SCORE??^^^^
+	*!^x-((bogosity|spamprobe): *spam|dspam[^:]*:.*\<spam|spam-status: *yes|yahoofilteredbulk)
+	{
+		SBDIR=$HOME/.spam
+		:0w
+		*?test -f $SBDIR/sb.robert.rc
+		{
+			ALTHOST=$HOST
+			DOMAIN=$THISISP
+			RM=/bin/rm
+			GREP=/bin/grep
+			FORMAIL=formail
+			LINEBUF=8192
+			FREEMAIL=NONE
+			ALWAYSBLOCK=$SBDIR/alwaysblock
+			LEGITLISTS=$SBDIR/legitlists
+			GLOBALNOBOUNCE=$SBDIR/globalnobounce
+			BLOCKREPLY=SILENT
+			PATTERNMATCHING=SILENT
+			RSSCHECK=no
+			DSBLCHECK=yes
+			RFCIPWHOISCHECK=yes
+			RFCPOSTMASTERCHECK=yes
+			RFCWHOISCHECK=yes
+			SPAMCOPCHECK=yes
+			# assumes that the spamassassin is configured for
+			#   ORDB checks
+			#   RBL checks
+			#   SURBL checks
+			#   URIBL black checks
+			#   HABEAS checks
+			:0w
+			*^x-spam-status:
+			{
+				URIBLCHECK=no
+				NJABLDULCHECK=no
+				NJABLPROXYCHECK=no
+				NORDNSCHECKING=no
+				OPMBLITZEDCHECK=no
+				SPAMHAUSORGCHECK=no
+				SURBLABCHECK=no
+				SURBLOBCHECK=no
+				SURBLPHCHECK=no
+				SURBLPJCHECK=no
+				SURBLSCCHECK=no
+				SURBLWSCHECK=no
+				XBLCHECK=no
+				HABEASVERIFIED=no
+				SPAMCOPCHECK=no
+			}
+			AHBLEXEMPTCHECK=yes
+			IFRAMECHECKING=no
+			MAINSLEAZE=none
+			SBDEBUG=yes		# only way to get nslookup's
+			FREEWEB=yes
+			FILTER=yes
+			#SBCONFIG=LITE
+			SBLOGLEVEL=0
+			SBDELIVERY=FILTER
+			BLOCKLEVEL=6
+			SPAMLEVEL=20
+			IADBCHECK=OI
+			SBHEADERS=COMPLETE
+			IBSCHECK=yes
+			SBHOST="host -W 1"
+			:0w
+			*$^from:.*\|[^0-9a-z]*[0-9a-z]+@(sneakemail|snkmail)\.com
+			*^x-sneakemail-is-sneakemail:
+			*^x-sneakemail-from:
+			{
+				#:0hw
+				#FROM=|formail -f -q- -zx From:\
+				#      |sed -n 's,^.*[^-._a-zA-Z0-9]\([a-zA-Z0-9][-._+a-zA-Z0-9=+]*@[-_.a-zA-Z0-9]*\.[a-zA-Z]*[a-zA-Z][a-zA-Z]\).*@.*$,\1,p'
+				#:0fhw
+				#|formail -f -q- -R From: X-sneakemail: \
+				# | formail -f -q- -a "From: $FROM"
+				#FROM
+				:0fhw
+				|formail -q- -R From: X-sneakemail: -R X-Sneakemail-From: From:
+			}
+			VERBOSE=off
+			LOCKFILE
+			INCLUDERC=$SBDIR/sb.robert.rc
+			ALTHOST
+			DOMAIN
+			RM
+			GREP
+			FORMAIL
+			FREEMAIL
+			ALWAYSBLOCK
+			LEGITLISTS
+			BLOCKREPLY
+			PATTERNMATCHING
+			SPAMLEVEL
+			DULCHECK
+			RBLCHECK
+			RSSCHECK
+			DSBLCHECK
+			SPAMASSINCHECKS
+			SPAMBOUNCERCHECKS
+			ORDBCHECK
+			RSLCHECK
+			RFCABUSECHECK
+			RFCDSNCHECK
+			RFCIPWHOISCHECK
+			RFCPOSTMASTERCHECK
+			RFCWHOISCHECK
+			SPAMHAUSORGCHECK
+			DORKSLCHECK
+			HABEASINFRINGERS
+			HABEASVERIFIED
+			OSOOLCHECK
+			OSHAVENCHECK
+			OSORCHECK
+			OSSHRCHECK
+			OSOPSCHECK
+			OSSPAMCHECK
+			FTSGSRCCHECK
+			FTSGRSSCHECK
+			FTSGMULTICHECK
+			FTSGWEBFORMCHECK
+			MONKEYFORMMAILCHECK
+			MONKEYPROXYCHECK
+			FTSGOPTOUTCHECK
+			FTSGIGNORECHECK
+			FTSGOTHERCHECK
+			FTSGDIALCHECK
+			TWOMBITCHECK
+			SORBSSPAMCHECK
+			SORBSPROXYCHECK
+			SORBSSOCKSCHECK
+			SORBSZOMBIECHECK
+			WIREHUBSPAMSOURCE
+			WIREHUBDIALUP
+			NJABLSRCCHECK
+			NJABLRSSCHECK
+			NJABLMULTICHECK
+			NJABLDULCHECK
+			NJABLCGICHECK
+			NJABLPROXYCHECK
+			EASYNETCHECK
+			CBLCHECK
+			WOTCHECK
+			AHBLRELAYCHECK
+			AHBLPROXYCHECK
+			AHBLSPAMCHECK
+			AHBLPSSLCHECK
+			AHBLCGICHECK
+			AHBLDDOSCHECK
+			AHBLDOMAINCHECK
+			OPMBLITZEDCHECK
+			SBDEBUG
+			EXEDOCCHECKING
+			EXELINKCHECKING
+			ZIPCHECKING
+			SURBLCHECKING
+			SURBLABCHECK
+			SURBLOBCHECK
+			SURBLPHCHECK
+			SURBLSCCHECK
+			SURBLWSCHECK
+			FREEWEB
+			BASE64BLOCK
+			LEAN
+			FILTER
+			SBCONFIG
+			SBLOGLEVEL
+			SBDELIVERY
+			BLOCKLEVEL
+			SPAMLEVEL
+			IADBCHECK
+			SBHEADERS
+			IBSCHECK
+			FIRSTEXHELOREVIPREGEXP
+			SECONDEXHELOREVIPREGEXP
+			THIRDEXHELOREVIPREGEXP
+			FOURTHEXHELOREVIPREGEXP
+			SBTEMP
+			BIT1
+			LOCALBUFFER
+			SBLOGTYPE
+			THIRDEXHELO
+			RUSSIAN
+			BIT2
+			WHITELIST
+			RDNSSCORE10
+			FOURTHEXIPREGEXP
+			XORIGINALIPREGEXP
+			SEVENTHBODYHOST
+			OPTOUT
+			BIT3
+			RDNSSCORE11
+			FOURTHEXREVIP
+			FIFTHBODYHOST
+			SECONDEXTODOMAIN
+			BIT4
+			RDNSSCORE12
+			BIT5
+			CIDRT
+			TESTSCORE
+			VENDOR
+			MSGPREFIX
+			FOURTHEXTOHOST
+			WHOIS
+			CWHOISHIJACKCHECK
+			URIBLREDCHECK
+			FIRSTEXIP
+			BIT6
+			SBLOGPREFIX
+			ARABIC
+			BIT7
+			LOCALSCORE
+			THIRDBODYDOMAIN
+			SORBSCGICHECK
+			RDNSSCORE
+			FOURTHEXHELO
+			FIFTHBODYIP
+			IADB2CHECK
+			TOHOST
+			LOCALIPREGEXP
+			FOURTHEXHELOREVIP
+			PINKISP
+			SBIDENTIFIED
+			SECONDEXIPREGEXP
+			THIRDEXIP
+			REPLYTOLOGON
+			SECONDBODYIP
+			SIXTHBODYIPREGEXP
+			TOUCH
+			FIRSTEXHELO
+			FIRSTEXREVIP
+			REPLYTO
+			DANGEROUSCHECKING
+			LOCALSENDER
+			FROMLOGON
+			FIRSTBODYDOMAIN
+			TESTLAST
+			LT2
+			LOCALTAG
+			FIFTHBODYREVIP
+			CHINESE
+			LT3
+			BLOCKTHIS
+			IPRDNSCHECKING
+			SURBLPJCHECK
+			LT4
+			SECONDEXHELOREVIP
+			THIRDEXDOMAIN
+			LANGFILTER
+			OUTLOOKTAGGING
+			SBMESSAGEID
+			LOCALNUMRCVDS
+			SECONDEXHOST
+			SBSPAMCOPHANDSHAKE
+			SPAMMERID
+			THIRDEXHELOREVIP
+			SIXTHBODYDOMAIN
+			LS
+			SPAMCOPEMAIL
+			FIRSTEXDOMAIN
+			TESTUPDATED
+			RDNSRESPONSE10
+			THIRDEXHELOIP
+			FOURTHBODYHOST
+			SORBSRELAYCHECK
+			RDNSRESPONSE11
+			FIRSTEXHELOIP
+			CD
+			SPAMCOPCHECK
+			TURKISH
+			VIRUSFOLDER
+			CHKLOCAL
+			LOCALREVIP
+			TESTPATTERNS
+			RDNSRESPONSE12
+			FIFTHBODYIPREGEXP
+			FROMHOST
+			SEVENTHBODYREVIP
+			DATE
+			JAPANESE
+			REPLYTODOMAIN
+			Q1A
+			SIXTHBODYHOST
+			BLOCKFOLDER
+			LEANTAG
+			LOCALREVCHECK
+			RDNSNAME10
+			LOCALHOSTFILE
+			SECONDBODYIPREGEXP
+			DD
+			GREEK
+			LOCALEVEL
+			RDNSNAME11
+			THIRDBODYHOSTIP
+			CYRILLIC
+			SECONDEXIP
+			TODOMAIN
+			FIRSTBODYHOSTREVIP
+			RDNSNAME12
+			THIRDEXREVIP
+			DEBUG
+			NUKEBOUNCES
+			SECONDEXDOMAIN
+			FROMDOMAIN
+			MDSERVER_HOST
+			THIRDEXTOHOST
+			XORIGINALIP
+			ECHO
+			SPAMREPLY
+			EXECHECKING
+			LOCALHOSTCHECKING
+			ERRORDOMAIN
+			TOLOGON
+			LOCALMIMEBDRY
+			SECONDEXHELOIP
+			THIRDBODYIPREGEXP
+			EGREP
+			FIRSTEXTOHOST
+			LOCALHELO
+			DANGEROUS
+			SBLOGTYPETEXT
+			THIRDEXTODOMAIN
+			FOURTHBODYDOMAIN
+			FOURTHBODYREVIP
+			SBSHELL
+			LOCALHELOCHECKING
+			URIBLCHECK
+			LOCALRCVD
+			MDSERVER_MASTER
+			BOUNCETHIS
+			LOCALERROR
+			SEVENTHBODYIP
+			MHDELIVER
+			MAINSLEAZE
+			SORBSPROXY2CHECK
+			FIRSTBODYHOSTIP
+			RDNSSCORE1
+			SED
+			XBLCHECK
+			CIDR8
+			RDNSRESPONSE1
+			RDNSSCORE2
+			MONTH
+			LOCALPID
+			XORIGINALREVIP
+			SIXTHBODYIP
+			CHKNONROUTABLE
+			QUAD1
+			CIDR9
+			CIDR10
+			RDNSRESPONSE2
+			RDNSSCORE3
+			THIRDBODYIP
+			FOURTHBODYHOSTREVIP
+			FIFTHBODYHOSTREVIP
+			SEVENTHBODYHOSTREVIP
+			CHMEXPLOITCHECKING
+			WHITELISTLOCAL
+			LOCALRECEIVER
+			QUAD2
+			CIDR11
+			RDNSRESPONSE3
+			RDNSSCORE4
+			REPLYTOHOST
+			SIXTHBODYHOSTIP
+			SIXTHBODYREVIP
+			SEVENTHBODYDOMAIN
+			FIRSTEXTODOMAIN
+			SECONDEXHELODOMAIN
+			QUAD3
+			CIDR12
+			TESTCIDR
+			RDNSRESPONSE4
+			RDNSSCORE5
+			SPLITMAIL
+			FIRSTBODYIPREGEXP
+			ADMINFOLDER
+			QUAD4
+			CIDR13
+			TESTTYPE
+			LOCALDESCRIPTION2
+			RDNSNAME1
+			RDNSRESPONSE5
+			RDNSSCORE6
+			CWHOISBOGONCHECK
+			SECONDEXHELO
+			SECONDEXTOHOST
+			STRING
+			CIDR14
+			CIDR20
+			RDNSSERVER
+			RDNSNAME2
+			RDNSRESPONSE6
+			RDNSSCORE7
+			THIRDEXHOST
+			THIRDEXIPREGEXP
+			FOURTHBODYIPREGEXP
+			FIFTHBODYDOMAIN
+			BYPASSWD
+			LOCAL24
+			CIDR15
+			CIDR21
+			RDNSNAME3
+			RDNSRESPONSE7
+			RDNSSCORE8
+			SPAMCOPQUALIFY
+			FIRSTEXHELOREVIP
+			THIRDEXHELODOMAIN
+			REPLYTOEMAIL
+			SECONDBODYDOMAIN
+			CLSIDCHECKING
+			HEBREW
+			MAILFROMHOST
+			CIDR16
+			CIDR22
+			RDNSNAME4
+			RDNSRESPONSE8
+			RDNSSCORE9
+			SBLOGSTYLE
+			SECONDBODYREVIP
+			THIRDBODYHOST
+			SPAMCOPREPORT
+			FROMEMAIL
+			CIDR17
+			CIDR23
+			RDNSNAME5
+			RDNSRESPONSE9
+			SPAMTAG
+			VIRUSTAG
+			FOURTHEXIP
+			CAT
+			URIBLGREYCHECK
+			FIRSTBODYHOST
+			CIDR18
+			CIDR24
+			CIDR30
+			RDNSNAME6
+			FOURTHBODYIP
+			BSPCHECK
+			BULKFOLDER
+			VIRUSCHECKING
+			CIDR19
+			CIDR25
+			CIDR31
+			RDNSNAME7
+			HELPPATH
+			SEVENTHBODYIPREGEXP
+			FIRSTEXIPREGEXP
+			CIDR26
+			CIDR32
+			RDNSNAME8
+			FOURTHBODYIP
+			BSPCHECK
+			BULKFOLDER
+			VIRUSCHECKING
+			CIDR19
+			CIDR25
+			CIDR31
+			RDNSNAME7
+			HELPPATH
+			SEVENTHBODYIPREGEXP
+			FIRSTEXIPREGEXP
+			CIDR26
+			CIDR32
+			RDNSNAME8
+			PATCH_OPTIONS
+			FIRSTBODYIP
+			SECONDBODYHOSTIPREGEXP
+			THIRDBODYHOSTIPREGEXP
+			FOURTHBODYHOSTIPREGEXP
+			FIFTHBODYHOSTIPREGEXP
+			SIXTHBODYHOSTIPREGEXP
+			SEVENTHBODYHOSTIPREGEXP
+			CIDR27
+			FIRSTBODYHOSTIPREGEXP
+			RDNSNAME9
+			RUNCHECK
+			WHITELISTED
+			HD1
+			MAILFROMDOMAIN
+			CIDR28
+			SBVERSION
+			LOCALNOBODY
+			HD2
+			FOURTHEXHOST
+			SECONDBODYHOSTREVIP
+			THIRDBODYREVIP
+			FOURTHBODYHOSTIP
+			FIRSTEXHELODOMAIN
+			CIDR29
+			SBSCORE
+			HD3
+			LOCALDOMAIN
+			LOCALCHECK
+			HD4
+			FOURTHEXHELODOMAIN
+			SORT
+			FIRSTEXHOST
+			SBLOG
+			HD5
+			SECONDBODYHOST
+			KOREAN
+			LOCALDESCRIPTION
+			SBLOGFLAGS
+			HD6
+			FOURTHEXTODOMAIN
+			FIRSTBODYREVIP
+			TR
+			HD7
+			FOURTHEXDOMAIN
+			THIRDBODYHOSTREVIP
+			SEVENTHBODYHOSTIP
+			SBSYSCHECK
+			AHBLEXEMPTCHECK
+			SCRIPTCHECKING
+			WHITELISTMYEMAIL
+			SBTODAY
+			TESTPATH
+			TESTNAME
+			RDNSRESPONSE
+			CLEANBODY
+			NORDNSCHECKING
+			LOCALIP
+			RDNSNAME
+			LOCKTIMEOUT
+			SECONDEXREVIP
+			FOURTHEXHELOIP
+			IFRAMECHECKING
+			TOEMAIL
+			SBLOGTEMP
+			FIFTHBODYHOSTIP
+			GLOBALNOBOUNCE
+			SBLOGFILE
+			SORBSDYNCHECK
+			SPANISH
+			SECONDBODYHOSTIP
+			SIXTHBODYHOSTREVIP
+			SBLOGNUMBER
+			FIRSTEXHELOIPREGEXP
+			LOCALHOST
+			CHECKREVIP
+			LOCKFILE=$GLOBLOCKFILE
+			VERBOSE=on
+			:0fhw
+			*^x-sneakemail:
+			|formail -q- -R From: X-Sneakemail-From: -R X-sneakemail: From:
+		}
+		:Ehfw
+		|formail -f -q- -a "X-SBClass: Blocked"
+		# NOBOUNCEs get through despite Spambayes results...
+		:0fhw
+		*^x-spambayes[^:]*: *spam
+		*^x-(sbpass: .*(nobounce|whitelist|legitimate)|sbrule: .*local)
+		|formail -q- -i X-Spambayes
+		
+	}
+	SCORE=1
+	:0w
+	*^x-sbrule: *empty ()
+	{
+		VERBOSE=off
+		LOG=`formail -f -q- -x X-SBRule: -x X-SBNote: -x X-Spam-Report:`
+		LOG="
+ junk: empty header
+"
+		:0cw
+		*?which razor-report
+		|formail -f -b -Y -q- $HDRFILT | razor-report $RAZORFLAGS
+		:0cw
+		*?which pyzor
+		|formail -f -b -Y -q- $HDRFILT | pyzor report 2>/dev/null; cat >/dev/null
+		:0cw
+		*?which dccproc
+		|formail -f -b -Y -q- $IFBOUNCESSNEAK | dccproc -l /tmp/dccproc
+		:0cw:$HOME/.idata.lock
+		*?which ifile
+		|head -c 100000 | formail -f -b -Y -q- -I "From " $HDRFILT \
+		 | phrases $HOME/.idata.phrases \
+		 | ifile -k -S -w -m 100000 -i spam \
+		 && cat >/dev/null
+		:0cw:$HOME/.bogofilter.lock
+		*!^x-bogosity: *spam
+		*?which bogofilter
+		|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+		 | bogofilter --multi-token-count=2 -s \
+		 && cat >/dev/null
+		#:Acw:$HOME/.bogofilter1.lock
+		#|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+		# | bogofilter -d $HOME/.bogofilter1 -s \
+		# && cat >/dev/null
+		:0c
+		*^x-spamprobe:
+		*^x-spamprobe: *spam
+		/dev/null
+		:Ecw:$HOME/.spamprobe.lock
+		*?which spamprobe
+		|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+		 | spamprobe -Y -Hall train-spam \
+		 && cat >/dev/null
+		:0c
+		*^x-dspam:
+		*^x-dspam[^:]*:.*\<spam
+		/dev/null
+		:Ecw:$HOME/.dspam.lock
+		*?which dspam
+		|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+		 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+		 && cat >/dev/null
+		:0c
+		*^x-spambayes
+		*^x-spambayes[^:]*: *spam
+		/dev/null
+		:Ecw:$HOME/.hammiedb.lock
+		*?which sb_filter.py
+		|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+		 | sb_filter.py -s \
+		 && cat >/dev/null
+		# this is wrong -- shouldn't be marked as non-spam
+		#:0hcw:$TRASHDIR/procmail_junk.messids.lock
+		#*!HASH??^^^^
+		#|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+	        #    | formail -D 122880 $TRASHDIR/procmail_junk.messids; \
+		#    cat >/dev/null
+		:0hcw:$SPAMMESSIDS.lock
+		*!HASH??^^^^
+		|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+	            | formail -D 122880 $SPAMMESSIDS; \
+		    cat >/dev/null
+		:0hcw:$SPAMMESSIDS.lock
+		|formail -D 122880 $SPAMMESSIDS; exit 0
+		:0:
+		$PROCMAIL_TRASH
+	}
+	:Ew
+	*FROM_MAILER_DAEMON??yes
+	{
+		LOG="`formail -f -q- -X X-SBClass: -X X-SBPass: \
+		     | sed -e 's,^, ,'; cat >/dev/null`
+"
+		:0w
+		*^x-spam-report:.*[^a-z]mailer_daemon
+		{ LOG="`formail -f -q- -X X-Spam-Report: \
+		     | sed -e 's,^, ,'; cat >/dev/null`
+"               }
+		TRASHMAILER=no
+		#|pstn-levels:[^a-z]*s:[^0-9]*0.0
+		:0w
+		*RESPOND??^^^^
+		*^(x-(sbclass: *spam|spam-status: *yes|(bogosity|spamprobe|spambayes[^:]*): *spam|dspam[^:]*:.*\<spam|yahoofilteredbulk)|subject: *spam detected by bigfoot:)
+		{ TRASHMAILER=yes }
+		:0Bw
+		*?which bogofilter
+		*^subject:
+		*^received:
+		{
+			BOGOHEAD=`formail -f -b -Y -q- -I "" \
+				  | sed -n '/^return-path: /I,${p;b;};/^received: /I,$p' \
+				  | head -c 100000 \
+			          | formail -f -b -Y -q- $HDRFILT \
+				  | bogofilter --multi-token-count=2 -v`
+			:0fhw
+			*!BOGOHEAD??^^^^
+			|formail -q- -i "$BOGOHEAD"
+			:0w
+			*RESPOND??^^^^
+			*^x-bogosity: *spam
+			{
+				TRASHMAILER=yes
+			}
+			:Ew
+			{
+				:0Bw
+				*^subject:
+				{ SAVE_MATCH=`formail -f -b -Y -q- -I ""|/bin/grep -i '^subject:'|head -1 \
+					    | perl -w -e '@_=<>;$_=join("",@_);while (s/\n$//) {};s/.*\n//g;s/^subject: *//i;print;'` }
+				:0fwh
+				*!SAVE_MATCH??^^^^
+				|formail -q- -A "X-header-match: $SAVE_MATCH"
+				SCORE1=$SCORE
+			}
+			BOGOHEAD
+		}
+		:Ew
+		*RESPOND??^^^^
+		{ TRASHMAILER=yes }
+		:0w
+		*!TRASHMAILER??no
+		{
+			VERBOSE=off
+			LOG="`formail -f -q- -x X-SBRule: -x X-SBNote: -x X-Spam-Report: -x X-Bogosity: -x X-pstn-levels:`
+"
+			LOG=" `formail -f -b -Y -q- -I ''|/bin/grep -i '^to: '|head -1`
+"
+			LOG="  `formail -f -b -Y -q- -I ''|/bin/grep -i '^subject: '|head -1`
+"
+			LOG=" junk: mailer-daemon spam
+"
+			:0cw
+			*?which razor-report
+			|formail -f -b -Y -q- $HDRFILT | razor-report $RAZORFLAGS
+			:0cw
+			*?which pyzor
+			|formail -f -b -Y -q- $HDRFILT | pyzor report 2>/dev/null; cat >/dev/null
+			:0cw
+			*?which dccproc
+			|formail -f -b -Y -q- $IFBOUNCESSNEAK | dccproc -l /tmp/dccproc
+			:0cw:$HOME/.idata.lock
+			*?which ifile
+			|head -c 100000 | formail -f -b -Y -q- -I "From " $HDRFILT \
+			 | phrases $HOME/.idata.phrases \
+			 | ifile -k -S -w -m 100000 -i spam \
+			 && cat >/dev/null
+			:0cw:$HOME/.bogofilter.lock
+			*!^x-bogosity: *spam
+			*?which bogofilter
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | bogofilter --multi-token-count=2 -s \
+			 && cat >/dev/null
+			#:Acw:$HOME/.bogofilter1.lock
+			#|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			# | bogofilter -d $HOME/.bogofilter1 -s \
+			# && cat >/dev/null
+			:0c
+			*^x-spamprobe:
+			*^x-spamprobe: *spam
+			/dev/null
+			:Ecw:$HOME/.spamprobe.lock
+			*?which spamprobe
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | spamprobe -Y -Hall train-spam \
+			 && cat >/dev/null
+			:0c
+			*^x-dspam:
+			*^x-dspam[^:]*:.*\<spam
+			/dev/null
+			:Ecw:$HOME/.dspam.lock
+			*?which dspam
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+			 && cat >/dev/null
+			:0c
+			*^x-spambayes
+			*^x-spambayes[^:]*: *spam
+			/dev/null
+			:Ecw:$HOME/.hammiedb.lock
+			*?which sb_filter.py
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | sb_filter.py -s \
+			 && cat >/dev/null
+			:0hcw:$SPAMMESSIDS.lock
+			*!HASH??^^^^
+			|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+		            | formail -D 122880 $SPAMMESSIDS; \
+			    cat >/dev/null
+			:0hcw:$SPAMMESSIDS.lock
+			|formail -D 122880 $SPAMMESSIDS; exit 0
+			:0:
+			$PROCMAIL_TRASH
+		}
+		#VERBOSE=on
+		PRIORITY="C"
+	}
+	:Ew
+	*RESPOND??^^^^
+	*PRIORITY??^[^AB]$
+	*SAVE_TO??^$
+	{
+		#|pstn-levels:[^a-z]*s:[^0-9]*0\.0
+		:0w
+		*^(x-(sbclass: *spam|spam-status: *yes|(bogosity|spamprobe|spambayes[^:]*): *spam|dspam[^:]*:.*\<spam|yahoofilteredbulk)|subject: *spam detected by bigfoot:)
+		{
+			VERBOSE=off
+			LOG=`formail -f -q- -x X-SBClass: -x X-SBRule: -x X-SBNote: -x X-Spam-Report: -x X-SpamBayes -x X-Bogosity: -x X-SpamProbe -x X-DSPAM -x X-pstn-levels:`
+			LOG="
+ junk: definite undirected spam:
+"
+			:0cw
+			*?which razor-report
+			|formail -f -b -Y -q- $HDRFILT | razor-report $RAZORFLAGS
+			:0cw
+			*?which pyzor
+			|formail -f -b -Y -q- $HDRFILT | pyzor report 2>/dev/null; cat >/dev/null
+			:0cw
+			*?which dccproc
+			|formail -f -b -Y -q- $IFBOUNCESSNEAK | dccproc -l /tmp/dccproc
+			:0cw:$HOME/.idata.lock
+			*?which ifile
+			|head -c 100000 | formail -f -b -Y -q- -I "From " $HDRFILT \
+			 | phrases $HOME/.idata.phrases \
+			 | ifile -k -S -w -m 100000 -i spam \
+			 && cat >/dev/null
+			:0cw:$HOME/.bogofilter.lock
+			*!^x-bogosity: *spam
+			*?which bogofilter
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | bogofilter --multi-token-count=2 -s \
+			 && cat >/dev/null
+			#:Acw:$HOME/.bogofilter1.lock
+			#|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			# | bogofilter -d $HOME/.bogofilter1 -s \
+			# && cat >/dev/null
+			:0c
+			*^x-spamprobe:
+			*^x-spamprobe: *spam
+			/dev/null
+			:Ecw:$HOME/.spamprobe.lock
+			*?which spamprobe
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | spamprobe -Y -Hall train-spam \
+			 && cat >/dev/null
+			:0c
+			*^x-dspam:
+			*^x-dspam[^:]*:.*\<spam
+			/dev/null
+			:Ecw:$HOME/.dspam.lock
+			*?which dspam
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+			 && cat >/dev/null
+			:0c
+			*^x-spambayes
+			*^x-spambayes[^:]*: *spam
+			/dev/null
+			:Ecw:$HOME/.hammiedb.lock
+			*?which sb_filter.py
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | sb_filter.py -s \
+			 && cat >/dev/null
+			# this is wrong -- shouldn't be marked as non-spam
+			#:0hcw:$TRASHDIR/procmail_junk.messids.lock
+			#*!HASH??^^^^
+			#|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+		        #    | formail -D 122880 $TRASHDIR/procmail_junk.messids; \
+			#    cat >/dev/null
+			:0hcw:$SPAMMESSIDS.lock
+			*!HASH??^^^^
+			|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+		            | formail -D 122880 $SPAMMESSIDS; \
+			    cat >/dev/null
+			:0hcw:$SPAMMESSIDS.lock
+			|formail -D 122880 $SPAMMESSIDS; exit 0
+			:0:
+			$PROCMAIL_TRASH
+		}
+		#:Ew
+		#*!^x-((sbclass|spam-status):|pstn-levels:[^a-z]*s:[^0-9]*0.0)
+		#{
+		#	VERBOSE=off
+		#	LOG="
+#junk: suspected undirected spam:
+#"
+		#	:0:
+		#	$PROCMAIL_TRASH
+		#}
+		# special keyword...
+		#|pstn-levels:[^a-z]*s:[^0-9]*0\.0
+		:Ew
+		*FROM_MAILER_DAEMON??yes
+		*^x-(sbclass: *spam|spam-status: *yes|(bogosity|spamprobe|spambayes[^:]*): *spam|dspam[^:]*:.*\<spam|yahoofilteredbulk)
+		{
+			VERBOSE=off
+			LOG=`formail -f -q- -x X-SBClass: -x X-SBRule: \
+			     -x X-SBNote: -x To: \
+			     -x X-Spam-Report: -x X-SpamBayes \
+			     -x X-Bogosity: -x X-SpamProbe  \
+			     -x X-DSPAM -x X-pstn-levels:`
+			LOG="
+junk: undirected blocked mailer/daemon:
+"
+			:0cw:$HOME/.idata.lock
+			*?which ifile
+			|head -c 100000 | formail -f -b -Y -q- -I "From " $HDRFILT \
+			 | phrases $HOME/.idata.phrases \
+			 | ifile -k -S -w -m 100000 -i spam \
+			 && cat >/dev/null
+			:0cw:$HOME/.bogofilter.lock
+			*!^x-bogosity: *spam
+			*?which bogofilter
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | bogofilter --multi-token-count=2 -s \
+			 && cat >/dev/null
+			#:Acw:$HOME/.bogofilter1.lock
+			#|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			# | bogofilter -d $HOME/.bogofilter1 -s \
+			# && cat >/dev/null
+			:0c
+			*^x-spamprobe:
+			*^x-spamprobe: *spam
+			/dev/null
+			:Ecw:$HOME/.spamprobe.lock
+			*?which spamprobe
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | spamprobe -Y -Hall train-spam \
+			 && cat >/dev/null
+			:0c
+			*^x-dspam:
+			*^x-dspam[^:]*:.*\<spam
+			/dev/null
+			:Ecw:$HOME/.dspam.lock
+			*?which dspam
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+			 && cat >/dev/null
+			:0c
+			*^x-spambayes
+			*^x-spambayes[^:]*: *spam
+			/dev/null
+			:Ecw:$HOME/.hammiedb.lock
+			*?which sb_filter.py
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | sb_filter.py -s \
+			 && cat >/dev/null
+			:0:
+			$PROCMAIL_TRASH
+		}
+		# special keyword...
+	}
+	:0w
+	*!^(x-((sbclass|bogosity|spamprobe|spambayes[^:]*): *spam|dspam[^:]*:.*\<spam|spam-status: *yes|yahoofilteredbulk)|subject: *spam detected by bigfoot:)
+	*!NOBOUNCE??^^^^
+	*!^x-(sbpass: .*(nobounce|whitelist|legitimate)|sbrule: .*local)
+	*PRIORITY??^[^AB]$
+	{
+		NASTINESSTMP="/tmp/procmail_junk.$$.nastiness"
+		PREVTRAP=""
+		:0w
+		*!TRAP??^^^^
+		{ PREVTRAP="; $TRAP" }
+		TRAP="/bin/rm -f $NASTINESSTMP$PREVTRAP"
+		PREVTRAP
+		NASTINESS=0
+		:0w
+		*^x-\/(spam-report:.*[^a-z]((spf_|rbl|osiru|habeas|listed *in *(razor|dcc))[^a-z])|sbclass: *blocked)
+		{
+			LOG=" $MATCH
+"
+			NASTINESS=1
+		}
+		:0w
+		*NASTINESS??^0
+		*^x-\/(helo-warning:|spam-status:.*[^a-z](from_(missing|malformed)|many_froms|forged_))
+		{
+			LOG=" $MATCH
+"
+			NASTINESS=1
+		}
+		# set the nastiness level
+		#:0hi
+		#*NASTINESS2??^0
+		#NASTINESS1=|formail -f -q- -X ""|/bin/fgrep -if $NASTIESFILE1|wc -l|sed -e 's,$,+'$NASTINESS2','|bc
+		NASTINESS1=$NASTINESS
+		:0w
+		*! FROM??^[a-z0-9][-_.a-z0-9=+]*@([-a-z0-9]+\.)*[a-z]?[a-z]?[a-z][a-z]$
+		{
+			NASTINESS=`expr $NASTINESS + 1`
+			VERBOSE=off
+			LOG="
+ junk: bogus From ($FROM): increasing nastiness to $NASTINESS
+"
+			VERBOSE=on
+			NASTINESS1=$NASTINESS
+		}
+		:0w
+		*^received: .*\/\(may be forged\)
+		{
+			NASTINESS=`expr $NASTINESS + 1`
+			VERBOSE=off
+			:0hfw
+			|formail -f -q- -A "X-header-match: forged"
+			VERBOSE=on
+		}
+		:0w
+		*NASTINESS??^0
+		{
+			NASTINESS=`lockfile -l60 $NASTIESFILE.lock&&formail -f -q- -X "" \
+				   |formail -f -q- -I Subject: $HDRFILT \
+				   |fgrep -if $NASTIESFILE|tee $NASTINESSTMP\
+				   |wc -l|sed -e 's,^ *,,';\
+				   /bin/rm -f $NASTIESFILE.lock`
+			:0hfw
+			*!NASTINESS??^0
+			|formail -f -q- -A "X-header-match: nastiesfile: `cat $NASTINESSTMP`"
+		}
+		# this only currently works for exim4
+		#:0hw
+		#*?which rblcheck
+		#NASTINESS1=|formail -f -q- -c -X Received: | sed -n 's,.*[[(]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)[])].*,\1,gp'|xargs -r rblcheck -c -s dev.null.dk -s dews.qmail.org -s blackholes.five-ten-sg.com -s blackholes.five-ten-sg.com -s relays.visi.com -s blackholes.2mbit.com -s spammers.v6net.org|/bin/grep -v '^not '|wc -l|sed -e 's,^ *,,;s,$,+'$NASTINESS','|bc
+		:0c
+		*^x-(bogosity: *ham|spamprobe: *good *0*\.000|(spambayes|dspam)[^:]*: *ham|yahoofilteredbulk)
+		/dev/null
+		:EWc
+		*!x-spam-status:
+		*NASTINESS??^0
+		*?which dccproc
+		|dccproc -Q -cCMN,50 -l /tmp/dccproc
+		:ew
+		{
+			NASTINESS=1
+			:0hfw
+			|formail -f -q- -A "X-header-match: dccproc"
+			NASTINESS1=$NASTINESS
+		}
+		:0c
+		*^x-(bogosity: *ham|spamprobe: *good *0*\.000|(spambayes|dspam)[^:]*: *ham|yahoofilteredbulk)
+		/dev/null
+		:Ewc
+		*NASTINESS??^0
+		*!x-spam-status:
+		*?which razor-check
+		|formail -f -b -Y -q- $HDRFILT | razor-check
+		:aw
+		{
+			NASTINESS=1
+			:0hfw
+			|formail -f -q- -A "X-header-match: razor"
+			NASTINESS1=$NASTINESS
+		}
+		:0c
+		*^x-(bogosity: *ham|spamprobe: *good *0*\.000|(spambayes|dspam)[^:]*: *ham|yahoofilteredbulk)
+		/dev/null
+		:Ewc
+		*NASTINESS??^0
+		*!x-spam-status:
+		*?which pyzor
+		|formail -f -b -Y -q- $HDRFILT | pyzor check
+		:aw
+		{
+			NASTINESS=1
+			:0hfw
+			|formail -f -q- -A "X-header-match: pyzor"
+			NASTINESS1=$NASTINESS
+		}
+		#|pstn-levels:[^a-z]*s:[^0-9]*0\.0
+		:0c
+		*^x-(bogosity: *ham|spamprobe: *good *0*\.000|(spambayes|dspam)[^:]*: *ham|yahoofilteredbulk)
+		/dev/null
+		:Ew
+		*NASTINESS??^0
+		{
+			OLDTIMEOUT=$TIMEOUT
+			TIMEOUT=1800
+			RBLTMP="/tmp/procmail_junk.$$.rbl"
+			NASTINESS=`formail -f -q- -c -X Received:\
+				   |sed -n 's,.*[[(]\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)[])].*,\4.\3.\2.\1,p'\
+				   |/bin/grep -v '^1\.0\.0\.127$' \
+				   |sed -e 's,\(.*\),\1.dev.null.dk \1.dews.qmail.org \1.spamguard.leadmon.net \1.blackholes.intersil.net \1.spamsources.fabel.dk \1.blackholes.uceb.org \1.vox.schpider.com \1.ohps.bl.reynolds.net.au \1.omrs.bl.reynolds.net.au \1.osps.bl.reynolds.net.au \1.osrs.bl.reynolds.net.au \1.owfs.bl.reynolds.net.au \1.owps.bl.reynolds.net.au \1.rdts.bl.reynolds.net.au \1.ricn.bl.reynolds.net.au \1.rmst.bl.reynolds.net.au \1.t1.bl.reynolds.net.au \1.bl.deadbeef.com \1.relays.nether.net \1.unsure.nether.net \1.bulk.rhs.mailpolice.com \1.porn.rhs.mailpolice.com \1.bl.csma.biz \1.dnsbl.cyberlogic.net \1.rbl.rangers.eu.org \1.intruders.www.docs.uu.se \1.dnsbl.www.kempt.net \1.dynablock.njabl.org \1.psbl.surriel.com \1.access.redhawk.org \1.query.senderbase.org \
+\1.rbl.snark.net \1.spamsources.dnsbl.info \1.dnsbl.jammconsulting.com \1.0spam.fusionzero.com \1.dnsbl.wpbl.pc9.org \1.no-more-funn.moensted.dk \1.psbl.surriel.com,'\
+				   |xargs -t -P10 -n1 host -W 1 \
+				   |/bin/grep '	A	'\
+				   |tee $RBLTMP\
+				   |wc -l\
+				   |sed -e 's,^ *,,;s,$,+'$NASTINESS1','|bc`
+			TIMEOUT=$OLDTIMEOUT
+			:0hfw
+			*!NASTINESS??^0
+			|formail -f -q- -A "X-header-match: rblcheck"|/bin/grep -v '^$'&&sed -e 's,^,X-header-match: rbl: ,' $RBLTMP;echo ''
+			PREVTRAP=""
+			:0w
+			*!TRAP??^^^^
+			{ PREVTRAP="; $TRAP" }
+			TRAP="/bin/rm -f $RBLTMP$PREVTRAP"
+			PREVTRAP
+			RBLTMP
+			NASTINESS1=$NASTINESS
+		}
+		# rfc-ignorant.org is now in SpamBouncer
+		#:0hw
+		#*NASTINESS??^0
+		#NASTINESS=|formail -f -q- -c -X Received:|/bin/fgrep ' from '|sed -n 's,.* from  *\([a-zA-Z0-9][-_a-zA-Z0-9]*\.[-_.a-zA-Z0-9]*\).*,\1,p;t;s,.*(HELO  *\([a-zA-Z0-9][-_a-zA-Z0-9]*\.[-_.a-zA-Z0-9]*\).*,\1,p'|sed -e 's,\(.*\),\1.dsn.rfc-ignorant.org \1.postmaster.rfc-ignorant.org \1.bandwidth-pigs.monkeys.com \1.sender-domain.sjesl.monkeys.com \1.helo-domain.sjesl.monkeys.com \1.client-domain.sjesl.monkeys.com \1.in.dnsbl.org,'|xargs -n1 nslookup -sil -timeout=1|/bin/grep '^Name: '|wc -l|sed -e 's,^ *,,;s,$,+'$NASTINESS1','|bc
+		#NASTINESS1=$NASTINESS
+		# this check is now done in spambouncer
+		#:0w
+		#*NASTINESS??^0
+		#*^return-path:
+		#{
+		#	NASTINESS=`formail -f -q- -c -zx Return-Path:|head -1\
+		#		   |sed -e 's,.*@,,;s,>.*$,,;s,\(.*\),\1.bulk.rhs.mailpolice.com \1.porn.rhs.mailpolice.com \1.blackhole.securitysage.com \1.rhsbl.sorbs.net \1.rhsbl.ahbl.org,'\
+		#		   |xargs -t -n1 nslookup -sil -timeout=1\
+		#		   |/bin/grep '^Name: '|wc -l\
+		#		   |sed -e 's,^ *,,;s,$,+'$NASTINESS1','|bc`
+		#	:0hfw
+		#	*!NASTINESS??^0
+		#	|formail -f -q- -A "X-header-match: rblcheck1"
+		#	NASTINESS1=$NASTINESS
+		#}
+		# spamcop is in spamassassin
+		#:0hw
+		#*NASTINESS??^0
+		#NASTINESS=|formail -f -q- -c -X Received:|sed -n 's,.*[[(]\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)[])].*,\4.\3.\2.\1,p'|sed -e 's,\(.*\),\1.bl.spamcop.net,'|xargs -n1 nslookup -sil -timeout=1|/bin/grep '^Name: '|wc -l|sed -e 's,^ *,,;s,$,+'$NASTINESS1','|bc
+		#NASTINESS1=$NASTINESS
+		#:0hi
+		#*NASTINESS??^0
+		#NASTINESS=|if (-f /usr/local/bin/rblcheck.gz) guz /usr/local/bin/rblcheck;/bin/grep -i '^received: .*[([][1-9][0-9]*\.[1-9][0-9]*\.[1-9][0-9]*\.[1-9][0-9]*[])]'|sed -e 's,.*[([]\([1-9][0-9]*\.[1-9][0-9]*\.[1-9][0-9]*\.[1-9][0-9]*\)[])].*,\1,'|xargs -r -l1 rblcheck|/bin/grep -v '^not '|wc -l|sed -e 's,^ *,,'
+		# PRIORITY==C iff FROM_DAEMON
+		NASTINESSTMP
+	}
+	#:0w
+	#*SAVE_TO??^$
+	#*NASTINESS??^[1-9]
+	#{
+	#	VERBOSE=off
+	#	:0hw
+	#	LOG=|formail -f -q- -x X-SBRule: -x X-SBNote: -x X-Spam-Report: && echo ""
+	#	LOG="
+#junk: suspected undirected spam: nastiness=$NASTINESS
+#"
+	#	:0c
+	#	*?which razor-report
+	#	|razor-report $RAZORFLAGS
+	#	:0c
+	#	*?which dccproc
+	#	|[ ! -d /tmp/dccproc ] \
+	#	 && mkdir /tmp/dccproc; \
+	#	 dccproc -l /tmp/dccproc
+	#	:0:
+	#	$PROCMAIL_TRASH
+	#}
+	#:0fhw
+	#|formail -f -q- -I Priority: -R To: Old-To: -R X-to: To:
+	#:0w
+	#|formail -f -b -Y -q- -A "X-Precedence: junk-mail" -i "Priority: $PRIORITY" >>$LOWPRIORITY
+	KEYWORDS="keyword1|keyword2"
+	:0w
+	*!XKEYWORDS?^^^^
+	{
+		KEYWORDS="keyword1|keyword2"
+		# this needs to be kept in case we come in here a second time
+		#XKEYWORDS
+	}
+	PLACES="place1|place2"
+	FULLNAMES="\<your name|friend1"
+	:0w
+	*0^0
+	*50^.9 $B??.*\/$FULLNAMES
+	{
+		SAVE_MATCH="$MATCH"
+		SCORE2=$=
+		SCORE1=`expr $SCORE2 + $SCORE`
+		SCORE=$SCORE1
+		:0fwh
+		|formail -q- -A "X-match: $SAVE_MATCH"
+	}
+	FULLNAMES
+#formail -f -q- -c -zx To: | sed -e 's, ,,g;s,[^,]*<\([^>]*\)>,\1,g;s,\([^(]*\)([^)]*),\1,g;s/,/|/g;'
+#sed -e 's,",,g;s,'"'"',,g;s,$, '$PATHS $PATHS1,'|xargs -r -l1 /bin/egrep -i
+	:0w
+	*!^x-sbrule: *filter *evasion
+	*0^0
+	*125^1 $^(subject|x-sneakemail-keyword|keywords):.*\/($KEYWORDS)
+	{
+		SCORE2=$=
+		SAVE_MATCH=$MATCH
+		:0w
+		*SAVE_MATCH??(.*$)*\/.+
+		{ SAVE_MATCH=$MATCH }
+		# SAVE_MATCH=|printenv MATCH | perl -w -e '@_=<>;$_=join("",@_);while (s/\n$//) {};s/.*\n//g;print;'
+		SCORE1=`expr $SCORE2 + $SCORE`
+		SCORE=$SCORE1
+		:0fwh
+		|formail -q- -A "X-header-match: $SAVE_MATCH"
+	}
+	:0w
+	*!^x-sbrule: *filter *evasion
+	*0^0
+	*125^1 $^(subject|keywords):.*\/($PLACES)
+	{
+		SCORE2=$=
+		SAVE_MATCH=$MATCH
+		:0w
+		*SAVE_MATCH??(.*$)*\/.+
+		{ SAVE_MATCH=$MATCH }
+		#SAVE_MATCH=|printenv MATCH | perl -w -e '@_=<>;$_=join("",@_);while (s/\n$//) {};s/.*\n//g;print;'
+		SCORE1=`expr $SCORE2 + $SCORE`
+		SCORE=$SCORE1
+		:0fwh
+		|formail -q- -A "X-header-match: $SAVE_MATCH"
+	}
+	#:0w
+	#*0^0
+	#*16^.873 $B??.*\/$MAINADDR
+	#{
+	#	SAVE_MATCH="$MATCH"
+	#	SCORE2=$=
+	#	SCORE1=`expr $SCORE2 + $SCORE`
+	#	SCORE=$SCORE1
+	#}
+	#2/14/09
+	#COMPANIES="company1|company2"
+	#:0w
+	#*0^0
+	#*16^.873 $B??.*\/[^@]($COMPANIES)\>
+	#{
+	#	SCORE2=$=
+	#	SAVE_MATCH=$MATCH
+	#	:0w
+	#	*SAVE_MATCH??(.*$)*\/.+
+	#	{ SAVE_MATCH=$MATCH }
+	#	#SAVE_MATCH=|printenv MATCH | perl -w -e '@_=<>;$_=join("",@_);while (s/\n$//) {};s/.*\n//g;print;'
+	#	SCORE1=`expr $SCORE2 + $SCORE`
+	#	SCORE=$SCORE1
+	#	:0fwh
+	#	|formail -f -q- -A "X-match: $SAVE_MATCH"
+	#}
+	#COMPANIES
+	:0w
+	*!^x-sbrule: *filter *evasion
+	*0^0
+	*16^.873 $B??.*\/$KEYWORDS
+	{
+		SCORE2=$=
+		SAVE_MATCH=$MATCH
+		:0w
+		*SAVE_MATCH??(.*$)*\/.+
+		{ SAVE_MATCH=$MATCH }
+		#SAVE_MATCH=|printenv MATCH | perl -w -e '@_=<>;$_=join("",@_);while (s/\n$//) {};s/.*\n//g;print;'
+		SCORE1=`expr $SCORE2 + $SCORE`
+		SCORE=$SCORE1
+		:0fwh
+		|formail -q- -A "X-match: $SAVE_MATCH"
+	}
+	KEYWORDS
+	:0w
+	*0^0
+	*16^.873 $B??.*\/$PLACES
+	{
+		SCORE2=$=
+		SAVE_MATCH=$MATCH
+		:0w
+		*SAVE_MATCH??(.*$)*\/.+
+		{ SAVE_MATCH=$MATCH }
+		#SAVE_MATCH=|printenv MATCH | perl -w -e '@_=<>;$_=join("",@_);while (s/\n$//) {};s/.*\n//g;print;'
+		SCORE1=`expr $SCORE2 + $SCORE`
+		SCORE=$SCORE1
+		:0fwh
+		|formail -q- -A "X-match: $SAVE_MATCH"
+	}
+	PLACES
+	:0w
+	*SCORE??^[12]$
+	{
+		#|pstn-levels:[^a-z]*s:[^0-9]*0\.0
+		:0w
+		*RESPOND??^^^^
+		*^(x-(sbclass: *spam|spam-status: *yes|(bogosity|spambayes[^:]*): *spam)|subject: *spam detected by bigfoot:|dspam[^:]*:.*\<spam|yahoofilteredbulk)
+		*!^x-(sbpass: .*nobounce|sbrule: .*local)
+		{
+			VERBOSE=off
+			LOG=`formail -f -q- -x X-SBRule: -x X-SBNote: \
+			     -x X-SBClass: -x X-Spam-Flag: \
+			     -x X-Spam-Report: -x X-SpamBayes \
+			     -x X-Bogosity: -x X-SpamProbe \
+			     -x X-DSPAM -x X-pstn-levels:`
+			:0w
+			*SAVE_TO??^$
+			{
+				LOG="
+ junk: definite undirected spam:
+"
+			}
+			:Ew
+			{
+				LOG="
+ junk: definite directed spam:
+"
+			}
+			:0cw
+			*?which razor-report
+			|formail -f -b -Y -q- $HDRFILT | razor-report $RAZORFLAGS
+			:0cw
+			*?which pyzor
+			|formail -f -b -Y -q- $HDRFILT | pyzor report 2>/dev/null; cat >/dev/null
+			:0cw
+			*?which dccproc
+			|formail -f -b -Y -q- $IFBOUNCESSNEAK | dccproc -l /tmp/dccproc
+			:0cw:$HOME/.idata.lock
+			*?which ifile
+			|head -c 100000 | formail -f -b -Y -q- -I "From " $HDRFILT \
+			 | phrases $HOME/.idata.phrases \
+			 | ifile -k -S -w -m 100000 -i spam \
+			 && cat >/dev/null
+			:0cw:$HOME/.bogofilter.lock
+			*!^x-bogosity: *spam
+			*?which bogofilter
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | bogofilter --multi-token-count=2 -s \
+			 && cat >/dev/null
+			#:Acw:$HOME/.bogofilter1.lock
+			#|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			# | bogofilter -d $HOME/.bogofilter1 -s \
+			# && cat >/dev/null
+			:0c
+			*^x-spamprobe:
+			*^x-spamprobe: *spam
+			/dev/null
+			:Ecw:$HOME/.spamprobe.lock
+			*?which spamprobe
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | spamprobe -Y -Hall train-spam \
+			 && cat >/dev/null
+			:0c
+			*^x-dspam:
+			*^x-dspam[^:]*:.*\<spam
+			/dev/null
+			:Ecw:$HOME/.dspam.lock
+			*?which dspam
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+			 && cat >/dev/null
+			:0c
+			*^x-spambayes
+			*^x-spambayes[^:]*: *spam
+			/dev/null
+			:Ecw:$HOME/.hammiedb.lock
+			*?which sb_filter.py
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | sb_filter.py -s \
+			 && cat >/dev/null
+			# this is wrong; should be non-spam
+			#:0hcw:$TRASHDIR/procmail_junk.messids.lock
+			#*!HASH??^^^^
+			#|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+		        #    | formail -D 122880 $TRASHDIR/procmail_junk.messids; \
+			#    cat >/dev/null
+			:0hcw:$SPAMMESSIDS.lock
+			*!HASH??^^^^
+			|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+		            | formail -D 122880 $SPAMMESSIDS; \
+			    cat >/dev/null
+			:0hcw:$SPAMMESSIDS.lock
+			|formail -D 122880 $SPAMMESSIDS; exit 0
+			:0:
+			$PROCMAIL_TRASH
+		}
+		#deal with totally forged e-mail addresses
+		:Ew
+		*RESPOND??^^^^
+		*^x-forged-from:
+		{
+			VERBOSE=off
+			LOG=`formail -f -q- -x X-forged-from: -x X-SBRule: \
+			     -x X-SBNote: -x X-Spam-Report: -x X-HELO-Warning:`
+			LOG="
+ junk: directed forged address spam:
+"
+			:0cw
+			*?which razor-report
+			|formail -f -b -Y -q- $HDRFILT | razor-report $RAZORFLAGS
+			:0cw
+			*?which pyzor
+			|formail -f -b -Y -q- $HDRFILT | pyzor report 2>/dev/null; cat >/dev/null
+			:0cw
+			*?which dccproc
+			|formail -f -b -Y -q- $IFBOUNCESSNEAK | dccproc -l /tmp/dccproc
+			:0cw:$HOME/.idata.lock
+			*?which ifile
+			|head -c 100000 | formail -f -b -Y -q- -I "From " $HDRFILT \
+			 | phrases $HOME/.idata.phrases \
+			 | ifile -k -S -w -m 100000 -i spam \
+			 && cat >/dev/null
+			:0cw:$HOME/.bogofilter.lock
+			*!^x-bogosity: *spam
+			*?which bogofilter
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | bogofilter --multi-token-count=2 -s \
+			 && cat >/dev/null
+			#:Acw:$HOME/.bogofilter1.lock
+			#|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			# | bogofilter -d $HOME/.bogofilter1 -s \
+			# && cat >/dev/null
+			:0c
+			*^x-spamprobe:
+			*^x-spamprobe: *spam
+			/dev/null
+			:Ecw:$HOME/.spamprobe.lock
+			*?which spamprobe
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | spamprobe -Y -Hall train-spam \
+			 && cat >/dev/null
+			:0c
+			*^x-dspam:
+			*^x-dspam[^:]*:.*\<spam
+			/dev/null
+			:Ecw:$HOME/.dspam.lock
+			*?which dspam
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+			 && cat >/dev/null
+			:0c
+			*^x-spambayes
+			*^x-spambayes[^:]*: *spam
+			/dev/null
+			:Ecw:$HOME/.hammiedb.lock
+			*?which sb_filter.py
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | sb_filter.py -s \
+			 && cat >/dev/null
+			# this is wrong -- shouldn't be marked as non-spam
+			#:0hcw:$TRASHDIR/procmail_junk.messids.lock
+			#*!HASH??^^^^
+			#|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+		        #    | formail -D 122880 $TRASHDIR/procmail_junk.messids; \
+			#    cat >/dev/null
+			:0hcw:$SPAMMESSIDS.lock
+			*!HASH??^^^^
+			|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+		            | formail -D 122880 $SPAMMESSIDS; \
+			    cat >/dev/null
+			:0hcw:$SPAMMESSIDS.lock
+			|formail -D 122880 $SPAMMESSIDS; exit 0
+			:0:
+			$PROCMAIL_TRASH
+		}
+		:0Whc
+		*!NASTINESS??^0
+		|set -xv;formail -f -q- -c -X Received:\
+		 |sed -n 's,.*[[(]\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)[])].*,\4.\3.\2.\1,p'\
+	         |(/bin/grep -v '^1\.0\.0\.127$' || true) \
+		 |sed -e 's,\(.*\),\1.query.bondedsender.org,'\
+		 |xargs -t -n1 host \
+		 |/bin/grep '	A	' 1>&2
+		:aw
+		{
+			:0hfw
+			|formail -f -q- -A "X-header-match: bondedsender"
+			NASTINESS=0
+		}
+		:0w
+		*!NASTINESS??^0
+		*!x-helo-warning:
+		*?which spfquery
+		*$^received:.*from .*\[\/.*helo[^-_.a-z0-9][-_.a-z0-9].*by .*($THISISP)
+		{
+			RECEIVED=$MATCH
+			:0w
+			*RECEIVED??^\/[0-9.]+
+			{
+				REVIP=$MATCH
+			}
+			:0w
+			*RECEIVED??.*\<helo[^-_.a-z0-9]\/[-_.a-z0-9]+
+			{
+				HELO=$MATCH
+			}
+			:0w
+			*!REVIP??^^^^
+			{
+				SPFQUERYARG="-m $MATCH"
+				:0Wic
+				|spfquery -i $REVIP -h $HELO $SPFQUERYARG
+				SPFRET=$?
+				SPFQUERYARG
+				:0w
+				*SPFRET??^0
+				{
+					NASTINESS=0
+					:0hfw
+					|formail -f -q- -A "X-header-match: spf"
+				}
+				SPFRET
+			}
+			HELO
+			RECEIVED
+			REVIP
+		}
+		HAMCOUNT=0
+		:0w
+		*^x-(sbpass: .*(nobounce|whitelist|legitimate)|sbrule: .*local)
+		{ HAMCOUNT=1 }
+		:0w
+		*BOGOHEAD??^^^^
+		*!^x-bogosity:
+		*?which bogofilter
+		{
+			BOGOHEAD="`head -c 100000 | formail -f -b -Y -q- $HDRFILT | bogofilter --multi-token-count=2 -v`"
+			:0fhw
+			*!BOGOHEAD??^^^^
+			|formail -i "$BOGOHEAD"
+		}
+		:0w
+		*BOGOHEAD??ham
+		{
+			HAMCOUNT=`expr $HAMCOUNT + 1`
+			:0fhw
+			|formail -q- -A "X-header-match: bogofilter"
+		}
+		:0w
+		*IFILETMP??^^^^
+		*?which ifile
+		{
+			:0Bw
+			*FROM_MAILER_DAEMON??yes
+			*^subject:
+			*^received:
+			{
+				:0bWc
+				|formail -f -b -Y -q- -I "" \
+				 | sed -n '/^return-path: /I,${p;b;};/^received: /I,$p' \
+				 | (head -c 100000; cat >/dev/null) \
+				 | formail -f -b -Y -q- -I "From " $HDRFILT \
+				 | phrases -r $HOME/.idata.phrases \
+				 | ifile -S -w -m 100000 -c -q \
+				 | /bin/grep ^spam 1>&2
+				:ew
+				{
+					HAMCOUNT=`expr $HAMCOUNT + 1`
+					IFILETMP=`formail -f -b -Y -q- -I "" \
+					     | sed -n '/^return-path: /I,${p;b;};/^received: /I,$p' \
+					     | head -c 100000 \
+					     | formail -f -b -Y -q- -I "From " $HDRFILT \
+					     | phrases -r $HOME/.idata.phrases \
+					     | ifile -S -w -m 100000 -q`
+				}
+			}
+			:Ew
+			{
+				:0Wc
+				|(head -c 100000; cat >/dev/null) \
+				 | formail -f -b -Y -q- -I "From " $HDRFILT \
+				 | phrases -r $HOME/.idata.phrases \
+				 | ifile -S -w -m 100000 -c -q \
+				 | /bin/grep ^spam 1>&2
+				#|(ifile -S -w -m 100000 -q || true) | head -1 | /bin/grep ^spam
+				:ew
+				{
+					HAMCOUNT=`expr $HAMCOUNT + 1`
+					IFILETMP=`head -c 100000 \
+					     | formail -f -b -Y -q- -I "From " $HDRFILT \
+					     | phrases -r $HOME/.idata.phrases \
+					     | ifile -S -w -m 100000 -q`
+				}
+			}
+			:0fhw
+			*!IFILETMP??^^^^
+			|formail -q- -A "X-header-match: ifile: `echo $IFILETMP`"
+			IFILETMP
+		}
+		:0w
+		*BAYESHEAD??^^^^
+		*?which sb_filter.py
+		{
+			:0Bw
+			*FROM_MAILER_DAEMON??yes
+			*^subject:
+			*^received:
+			{
+				BAYESHEAD="`formail -f -b -Y -q- -I '' \
+					    | sed -n '/^return-path: /I,${p;b;};/^received: /I,$p' \
+					    | (head -c 100000; cat >/dev/null) \
+					    | formail -f -b -Y -q- $HDRFILT \
+					    | sb_filter.py -f \
+					    | formail -f -q- -X X-SpamBayes`"
+				:0fhw
+				*!BAYESHEAD??^^^^
+				|formail -q- -i "$BAYESHEAD"
+				LOG=" $BAYESHEAD
+"
+			}
+		}
+		:0w
+		*BAYESHEAD??ham
+		{
+			HAMCOUNT=`expr $HAMCOUNT + 1`
+			:0fhw
+			|formail -A "X-header-match: spambayes"
+		}
+		:0w
+		*PROBE??^^^^
+		*?which spamprobe
+		{
+			:0Bw
+			*FROM_MAILER_DAEMON??yes
+			*^subject:
+			*^received:
+			{
+				PROBE=`formail -f -b -Y -q- -I '' \
+					| sed -n '/^return-path: /I,${p;b;};/^received: /I,$p' \
+					| (head -c 100000; cat >/dev/null) \
+					| formail -f -b -Y -q- $HDRFILT \
+					| spamprobe -R score`
+				:0fhw
+				|formail -q- -i "X-SpamProbe: $PROBE"
+			}
+		}
+		:0w
+		*PROBE??good *0*\.00
+		{
+			HAMCOUNT=`expr $HAMCOUNT + 1`
+			:0fhw
+			|formail -q- -A "X-header-match: spamprobe"
+		}
+		:0w
+		*DSPAM??^^^^
+		*?which dspam
+		{
+			:0Bw
+			*FROM_MAILER_DAEMON??yes
+			*^subject:
+			*^received:
+			{
+				DSPAM=`formail -f -b -Y -q- -I '' \
+					| sed -n '/^return-path: /I,${p;b;};/^received: /I,$p' \
+					| (head -c 100000; cat >/dev/null) \
+					| formail -f -b -Y -q- $HDRFILT \
+					| dspam --user $LOGNAME --mode=notrain --classify`
+				:0fhw
+				*!DSPAM??^^^^
+				|formail -q- -i "$DSPAM"
+			}
+		}
+		:0w
+		*DSPAM??\<innocent.*probability=0\.0.*confidence=(1\.0|0\.9)
+		{
+			HAMCOUNT=`expr $HAMCOUNT + 1`
+			:0fhw
+			|formail -q- -A "X-header-match: dspam"
+		}
+		#:0w
+		#*!HAMCOUNT??^0
+		#{
+			#NASTINESS=0
+			## 4 out of the 6 spam filters decided it was ham
+			#:0w
+			#*!HAMCOUNT??^[1-2]$
+			#{
+				SCORE1=`expr $SCORE + $HAMCOUNT`
+				SCORE=$SCORE1
+			#}
+		#}
+	}
+	:0w
+	*SCORE??^[12]$
+	{
+		:0w
+		*SAVE_TO??^$
+		{
+			:0c
+			*!NOLOOP?^^^^
+			*$^TO$NOLOOP
+			{
+				:0w
+				*^x-(sb|spam)
+				{ LOG=`formail -f -q- -x X-SBRule: \
+					       -x X-SBNote: -x To: \
+					       -x X-Spam-Report: \
+					       -x X-SpamBayes \
+					       -x X-Bogosity: \
+					       -x X-SpamProbe \
+					       -x X-DSPAM ` }
+				LOG="
+junk: $NOLOOP mail
+"
+				:0cw
+				*?which razor-report
+				|formail -f -b -Y -q- $HDRFILT | razor-report $RAZORFLAGS
+				:0cw
+				*?which pyzor
+				|formail -f -b -Y -q- $HDRFILT | pyzor report 2>/dev/null; cat >/dev/null
+				:0cw
+				*?which dccproc
+				|formail -f -b -Y -q- $IFBOUNCESSNEAK | dccproc -l /tmp/dccproc
+				:0cw:$HOME/.idata.lock
+				*?which ifile
+				|head -c 100000 | formail -f -b -Y -q- -I "From " $HDRFILT \
+				 | phrases $HOME/.idata.phrases \
+				 | ifile -k -S -w -m 100000 -i spam \
+				 && cat >/dev/null
+				:0cw:$HOME/.bogofilter.lock
+				*!^x-bogosity: *spam
+				*?which bogofilter
+				|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				 | bogofilter --multi-token-count=2 -s \
+				 && cat >/dev/null
+				#:Acw:$HOME/.bogofilter1.lock
+				#|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				# | bogofilter -d $HOME/.bogofilter1 -s \
+				# && cat >/dev/null
+				:0c
+				*^x-spamprobe:
+				*^x-spamprobe: *spam
+				/dev/null
+				:Ecw:$HOME/.spamprobe.lock
+				*?which spamprobe
+				|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				 | spamprobe -Y -Hall train-spam \
+				 && cat >/dev/null
+				:0c
+				*^x-dspam:
+				*^x-dspam[^:]*:.*\<spam
+				/dev/null
+				:Ecw:$HOME/.dspam.lock
+				*?which dspam
+				|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+				 && cat >/dev/null
+				:0c
+				*^x-spambayes
+				*^x-spambayes[^:]*: *spam
+				/dev/null
+				:Ecw:$HOME/.hammiedb.lock
+				*?which sb_filter.py
+				|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				 | sb_filter.py -s \
+				 && cat >/dev/null
+				# this is wrong; shouldn't be non-spam
+				#:0hcw:$TRASHDIR/procmail_junk.messids.lock
+				#*!HASH??^^^^
+				#|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+			        #    | formail -D 122880 $TRASHDIR/procmail_junk.messids; \
+				#    cat >/dev/null
+				:0hcw:$SPAMMESSIDS.lock
+				*!HASH??^^^^
+				|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+			            | formail -D 122880 $SPAMMESSIDS; \
+				    cat >/dev/null
+				:0hcw:$SPAMMESSIDS.lock
+				|formail -D 122880 $SPAMMESSIDS; exit 0
+				:0:
+				$PROCMAIL_TRASH
+			}
+			# this seems to already be handled above
+			#:Ew
+			#*^x-(sbclass: *spam|spam-status: *yes|pstn-levels:[^a-z]*s:[^0-9]*0\.0)
+			#{
+			#	VERBOSE=off
+			#	LOG=`formail -f -q- -x X-SBRule: -x X-SBNote: \
+			#	     -x X-Spam-Report:`
+			#	LOG="
+#junk: definite undirected non-ok spam:
+#"
+			#	:0cw
+			#	*?which razor-report
+			#	|formail -f -b -Y -q- $HDRFILT | razor-report $RAZORFLAGS
+			#	:0cw
+			#	*?which pyzor
+			#	|formail -f -b -Y -q- $HDRFILT | pyzor report 2>/dev/null; cat >/dev/null
+			#	:0cw
+			#	*?which dccproc
+			#	|formail -f -b -Y -q- $IFBOUNCESSNEAK | dccproc -l /tmp/dccproc
+			#	:0hcw:$SPAMMESSIDS.lock
+			#	*!HASH??^^^^
+			#	|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+			#            | formail -D 122880 $SPAMMESSIDS; \
+			#	    cat >/dev/null
+			#	:0:
+			#	$PROCMAIL_TRASH
+			#}
+			#:Ew
+			#*!^x-((sbclass|spam-status):|pstn-levels:[^a-z]*s:[^0-9]*0.0)
+			#{
+			#	VERBOSE=off
+			#	LOG="
+#junk: suspected unlabelled multi-directed spam:
+#"
+			#	:0:
+			#	$PROCMAIL_TRASH
+			#}
+			:Ew
+			*RESPOND??^^^^
+			*NASTINESS??^[1-9]
+			{
+				VERBOSE=off
+				LOG=`formail -f -q- -x X-SBClass: -x X-SBRule: \
+				     -x X-SBNote: \
+				     -x X-Spam-Report: -x X-header-match: \
+				     -x X-SpamBayes \
+				     -x X-Bogosity: \
+				     -x X-SpamProbe \
+				     -x X-DSPAM `
+				LOG="
+ junk: nasty undirected spam: nastiness=$NASTINESS
+"
+				:0cw
+				*?which razor-report
+				|formail -f -b -Y -q- $HDRFILT | razor-report $RAZORFLAGS
+				:0cw
+				*?which pyzor
+				|formail -f -b -Y -q- $HDRFILT | pyzor report 2>/dev/null; cat >/dev/null
+				:0cw
+				*?which dccproc
+				|formail -f -b -Y -q- $IFBOUNCESSNEAK | dccproc -l /tmp/dccproc
+				:0cw:$HOME/.idata.lock
+				*?which ifile
+				|head -c 100000 | formail -f -b -Y -q- -I "From " $HDRFILT \
+				 | phrases $HOME/.idata.phrases \
+				 | ifile -k -S -w -m 100000 -i spam \
+				 && cat >/dev/null
+				:0cw:$HOME/.bogofilter.lock
+				*!^x-bogosity: *spam
+				*?which bogofilter
+				|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				 | bogofilter --multi-token-count=2 -s \
+				 && cat >/dev/null
+				#:Acw:$HOME/.bogofilter1.lock
+				#|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				# | bogofilter -d $HOME/.bogofilter1 -s \
+				# && cat >/dev/null
+				:0c
+				*^x-spamprobe:
+				*^x-spamprobe: *spam
+				/dev/null
+				:Ecw:$HOME/.spamprobe.lock
+				*?which spamprobe
+				|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				 | spamprobe -Y -Hall train-spam \
+				 && cat >/dev/null
+				:0c
+				*^x-dspam:
+				*^x-dspam[^:]*:.*\<spam
+				/dev/null
+				:Ecw:$HOME/.dspam.lock
+				*?which dspam
+				|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+				 && cat >/dev/null
+				:0c
+				*^x-spambayes
+				*^x-spambayes[^:]*: *spam
+				/dev/null
+				:Ecw:$HOME/.hammiedb.lock
+				*?which sb_filter.py
+				|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				 | sb_filter.py -s \
+				 && cat >/dev/null
+				# this is wrong; shouldn't be non-spam
+				#:0hcw:$TRASHDIR/procmail_junk.messids.lock
+				#*!HASH??^^^^
+				#|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+			        #    | formail -D 122880 $TRASHDIR/procmail_junk.messids; \
+				#    cat >/dev/null
+				:0hcw:$SPAMMESSIDS.lock
+				*!HASH??^^^^
+				|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+			            | formail -D 122880 $SPAMMESSIDS; \
+				    cat >/dev/null
+				:0hcw:$SPAMMESSIDS.lock
+				|formail -D 122880 $SPAMMESSIDS; exit 0
+				:0:
+				$PROCMAIL_TRASH
+			}
+		}
+		# sneakemail's fall thru...
+		:0c
+		*^from:.*[^0-9a-z][0-9a-z]+@(sneakemail|snkmail)\.com
+		/dev/null
+		:Ew
+		*PRIORITY??^[^C]$
+		*!^x-(spam-report:.*[^a-z]((habeas|listed *in *(razor|dcc))[^a-z])|yahoofilteredbulk)
+		*!FROM_MAILER_DAEMON??yes
+		*!^to: .*,
+		*!^cc: *[^ ]
+		*^from:
+		*!SAVE_TO??^$
+		*RESPOND??^^^^
+		{
+			#ATTEMPTS=0
+			#:0Bw
+			#*.*attempt\/[0-9][0-9]*
+			#{
+			#	ATTEMPTS=`expr $MATCH + 1`
+			#	:0bf
+			#	|/bin/grep -v 'attempt[0-9]'
+			#}
+			STILL=""
+			AGAIN=""
+			RESPOND=yes
+			:0Whc:$TRASHDIR/procmail_junk.auto.lock
+			|formail -f -q- -rtD 12288 $TRASHDIR/procmail_junk.auto
+			:aWhc:$TRASHDIR/procmail_junk.auto.1.lock
+			|formail -f -q- -rtD 12288 $TRASHDIR/procmail_junk.auto.1
+			:aw
+			{ AGAIN=" again" STILL=" still" }
+			:aWhc:$TRASHDIR/procmail_junk.auto.2.lock
+			|formail -f -q- -rtD 12288 $TRASHDIR/procmail_junk.auto.2
+			:aWhc:$TRASHDIR/procmail_junk.auto.3.lock
+			|formail -f -q- -rtD 12288 $TRASHDIR/procmail_junk.auto.3
+			:aWhc:$TRASHDIR/procmail_junk.auto.4.lock
+			|formail -f -q- -rtD 12288 $TRASHDIR/procmail_junk.auto.4
+			:aWhc:$TRASHDIR/procmail_junk.auto.5.lock
+			|formail -f -q- -rtD 12288 $TRASHDIR/procmail_junk.auto.5
+			:aw
+			{ RESPOND=no }
+			:0w
+			*RESPOND??yes
+			{
+				IFBOUNCESFILE="$$.`date +%H%M%S`"
+				IFBOUNCESSNEAK=""
+				:0icw:$PROCMAIL_TRASHDIR/procmail_junk.$IFBOUNCESFILE.lock
+				|(head -c 100000; echo ""; echo "") \
+				 |formail -f -b -Y -q- $HDRFILT \
+				 > $PROCMAIL_TRASHDIR/procmail_junk.$IFBOUNCESFILE
+				HDRTMP="/tmp/procmail_junk.$$.hdr"
+				:0hcw:$HDRTMP.lock
+				|formail -f -q- -X To: -X From: -X Subject: \
+				 -X Date: -X Message-ID: \
+				 -X X-SBRule: -X X-SBNote: \
+				 -X X-Spam-Flag: \
+				 -X X-Spam-Status: -X X-SBClass: \
+				 -X X-Spam-Report: -X X-Spam: \
+				 -X X-SpamBayes \
+				 -X X-Bogosity: \
+				 -X X-SpamProbe \
+				 -X X-DSPAM \
+				 >> $HDRTMP \
+				 && (echo "X-Loop: $SAVE_TO" \
+				     && echo "Old-Envelope-To: $SAVE_TO" \
+				     && echo "Old-Delivered-To: $SAVE_TO" \
+				     && echo "X-ifbounce: `basename $PROCMAIL_TRASHDIR`/$IFBOUNCESFILE") \
+				 >> $HDRTMP
+				PREVTRAP=""
+				:0w
+				*!TRAP??^^^^
+				{ PREVTRAP="; $TRAP" }
+				TRAP="/bin/rm $HDRTMP$PREVTRAP"
+				PREVTRAP
+				:0hcw:$TRASHDIR/procmail_junk.messids.lock
+				|formail -f -q- -rD 122880 $TRASHDIR/procmail_junk.messids
+				:0hcw:$TRASHDIR/procmail_junk.messids.lock
+				|formail -f -q- -rtD 122880 $TRASHDIR/procmail_junk.messids
+				# nasty ones eventually get trashed
+				:0w
+				*NASTINESS??^[1-9]
+				{
+					VERBOSE=off
+					LOG=`formail -f -q- \
+					     -x X-Spam-Report: \
+					     -x X-Spam-Status: \
+					     -x X-Spam-Flag: \
+					     -x X-SBRule: \
+					     -x X-SBNote: -x X-SBClass: \
+					     -x X-header-match: \
+					     -x X-SpamBayes \
+					     -x X-Bogosity:  \
+					     -x X-SpamProbe  \
+					     -x X-DSPAM`
+					LOG="
+ junk: suspected nasty directed spam: nastiness=$NASTINESS
+"
+					#*!^FROM_DAEMON
+					#-a "Auto-Submitted: auto-generated" 
+					#*ATTEMPTS??^[^9]
+					#echo "attempt$ATTEMPTS" &&
+					# disabled on 12/24/06
+					#:0wc:$TRASHDIR/download_mail.spam/2.`date +%h.%d`.lock
+					#|formail -f -b -Y -q- $HDRFILT \
+					#  >> $TRASHDIR/download_mail.spam/2.`date +%h.%d`
+					#     -I "Subject: please try sending your message again" \
+					:0whc
+					|(formail -f -q- -R To: X-from: \
+					   | formail -f -q- -i X-from: \
+					     -i "X-ifbounce: `basename $PROCMAIL_TRASHDIR`/$IFBOUNCESFILE" \
+					     -rt \
+					  && echo "" \
+					  && echo "Hello.  Thanks for writing$AGAIN.  Because my spam filter is unacquainted" \
+					  && echo "with your address, your message has been deleted.  In order for me to read" \
+					  && echo "your email, please resend using one or more of these techniques:" \
+					  && echo "1) With exactly the same subject of a message I sent to you before this one" \
+					  && echo "2) From an e-mail address that you used before" \
+					  && echo "3) CC'ed to an e-mail address of someone we mutually know" \
+					  && echo "4) With the full name or phone number or address of someone we mutually know" \
+					  && echo "   in the subject or at the top of your message" \
+					  && echo "5) With my full name or phone number or address in the subject or at the" \
+					  && echo "   top of your message" \
+					  && echo "6) With keywords in the subject or your message such as where we met," \
+					  && echo "   how you found or know me, password in zork, etc." \
+					  && echo "7) Sending your message as plain text without base64 encoding." \
+					  && echo "8) PGP or GPG encrypted to me" \
+					  && echo "9) With your full name in the subject or in your message" \
+					  && echo "10) Use another internet server provider (e.g., Google, Yahoo, Hotmail)" \
+					  && echo "11) Use other mail software than what you're using" \
+					  && echo "12) Register as a bonded sender at http://senderscorecertified.com/register" \
+					  && echo "If your email passes through my filter, you will not receive this message" \
+					  && echo "again.  If a spammer has sent you a message using my address, please" \
+					  && echo "forward the message to your ISP instead of replying to me.  Thanks." \
+					  && echo "" && cat $HDRTMP) \
+					 | $SENDMAIL -t
+					VERBOSE=on
+					:0iw:$PROCMAIL_TRASH.lock
+					|(formail -f -b -Y -q- -A "X-nastiness: $NASTINESS" \
+					  | head -c 100000; \
+					  echo "" && echo "") \
+					 >>$PROCMAIL_TRASH
+				}
+				# -a "Auto-Submitted: auto-generated" 
+				#*ATTEMPTS??^[^9]
+				#echo "attempt$ATTEMPTS" && 
+				#     -I "Subject: thanks for writing$AGAIN" \
+				:Echw
+				|(formail -f -q- -R To: X-from: \
+				   | formail -f -q- -i X-from: \
+				     -i "X-ifbounce: `basename $PROCMAIL_TRASHDIR`/$IFBOUNCESFILE" \
+				     -rt \
+				  && echo "" \
+				  && echo "Hello.  Thanks for writing$AGAIN.  Your message has not been deleted but" \
+				  && echo "is in my lowest priority folder.  To have your message read more quickly," \
+				  && echo "please resend using one or more of these techniques:" \
+				  && echo "1) With exactly the same subject of a message I sent to you before this one" \
+				  && echo "2) From an e-mail address that you used before" \
+				  && echo "3) CC'ed to an e-mail address of someone we mutually know" \
+				  && echo "4) With the full name or phone number or address of someone we mutually know" \
+				  && echo "   in the subject or at the top of your message" \
+				  && echo "5) With my full name or phone number or address in the subject or at the" \
+				  && echo "   top of your message" \
+				  && echo "6) With keywords in the subject or your message such as where we met," \
+				  && echo "   how you found or know me, password in zork, etc." \
+				  && echo "7) Sending your message as plain text without base64 encoding." \
+				  && echo "8) PGP or GPG encrypted to me" \
+				  && echo "9) With your full name in the subject or in your message" \
+				  && echo "10) Use another internet server provider (e.g., Google, Yahoo, Hotmail)" \
+				  && echo "11) Use other mail software than what you're using" \
+				  && echo "12) Register as a bonded sender at http://senderscorecertified.com/register" \
+				  && echo "Once my mail filter becomes acquainted with your e-mail address ($FROM)," \
+				  && echo "you will not receive this message again.  If a spammer has sent you a" \
+				  && echo "message using my address, please forward the message to your ISP instead" \
+				  && echo "of replying to me.  Thanks." \
+				  && echo "" && cat $HDRTMP) \
+				 | $SENDMAIL -t
+				:Aw
+				{
+					VERBOSE=off
+					LOG=`formail -f -q- \
+					     -x X-Spam-Report: \
+					     -x X-Spam-Status: \
+					     -x X-Spam-Flag: \
+					     -x X-SBRule: \
+					     -x X-SBNote: -x X-SBClass: \
+					     -x X-header-match: \
+					     -x X-SpamBayes \
+					     -x X-Bogosity:  \
+					     -x X-SpamProbe  \
+					     -x X-DSPAM`
+					LOG="
+ junk: suspected directed spam
+`formail -f -q- -X From: -X Subject:`
+"
+				}
+				HDRTMP
+			}
+			:Ew
+			{
+				VERBOSE=off
+				LOG="
+junk: directed over-responded-to spam:
+"
+				:0cw
+				*?which razor-report
+				|formail -f -b -Y -q- $HDRFILT | razor-report $RAZORFLAGS
+				:0cw
+				*?which pyzor
+				|formail -f -b -Y -q- $HDRFILT | pyzor report 2>/dev/null; cat >/dev/null
+				:0cw
+				*?which dccproc
+				|formail -f -b -Y -q- $IFBOUNCESSNEAK | dccproc -l /tmp/dccproc
+				:0cw:$HOME/.idata.lock
+				*?which ifile
+				|head -c 100000 | formail -f -b -Y -q- -I "From " $HDRFILT \
+				 | phrases $HOME/.idata.phrases \
+				 | ifile -k -S -w -m 100000 -i spam \
+				 && cat >/dev/null
+				:0cw:$HOME/.bogofilter.lock
+				*!^x-bogosity: *spam
+				*?which bogofilter
+				|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				 | bogofilter --multi-token-count=2 -s \
+				 && cat >/dev/null
+				#:Acw:$HOME/.bogofilter1.lock
+				#|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				# | bogofilter -d $HOME/.bogofilter1 -s \
+				# && cat >/dev/null
+				:0c
+				*^x-spamprobe:
+				*^x-spamprobe: *spam
+				/dev/null
+				:Ecw:$HOME/.spamprobe.lock
+				*?which spamprobe
+				|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				 | spamprobe -Y -Hall train-spam \
+				 && cat >/dev/null
+				:0c
+				*^x-dspam:
+				*^x-dspam[^:]*:.*\<spam
+				/dev/null
+				:Ecw:$HOME/.dspam.lock
+				*?which dspam
+				|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+				 && cat >/dev/null
+				:0c
+				*^x-spambayes
+				*^x-spambayes[^:]*: *spam
+				/dev/null
+				:Ecw:$HOME/.hammiedb.lock
+				*?which sb_filter.py
+				|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+				 | sb_filter.py -s \
+				 && cat >/dev/null
+				:0hcw:$SPAMMESSIDS.lock
+				*!HASH??^^^^
+				|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+			            | (formail -D 122880 $SPAMMESSIDS || true) \
+				    && cat >/dev/null
+				:0hcw:$SPAMMESSIDS.lock
+				|formail -D 122880 $SPAMMESSIDS; exit 0
+				:0:
+				$PROCMAIL_TRASH
+			}
+			PRIORITY="D"
+			SCORE=2
+		}
+		:Ew
+		*RESPOND??^^^^
+		*NASTINESS??^[1-9]
+		{
+			VERBOSE=off
+			:0w
+			*!SAVE_TO??^$
+			{
+				LOG="`formail -f -q- -x X-SBRule: -x X-SBNote: \
+					      -x X-SBClass: -x X-Spam-Report: \
+					      -x X-Spam-Flag: \
+					      -x X-Spam-Status: \
+					      -x X-pstn-levels: \
+					      -x X-header-match: \
+					      -x X-SpamBayes \
+					      -x X-Bogosity: \
+					      -x X-SpamProbe \
+					      -x X-DSPAM`
+"
+				LOG="junk: nasty directed spam: nastiness=$NASTINESS
+"
+			}
+			:Ew
+			{
+				LOG=" junk: nasty undirected spam: nastiness=$NASTINESS
+"
+			}
+			:0cw
+			*?which razor-report
+			|formail -f -b -Y -q- $HDRFILT | razor-report $RAZORFLAGS
+			:0cw
+			*?which pyzor
+			|formail -f -b -Y -q- $HDRFILT | pyzor report 2>/dev/null; cat >/dev/null
+			:0cw
+			*?which dccproc
+			|formail -f -b -Y -q- $IFBOUNCESSNEAK | dccproc -l /tmp/dccproc
+			:0cw:$HOME/.idata.lock
+			*?which ifile
+			|head -c 100000 | formail -f -b -Y -q- -I "From " $HDRFILT \
+			 | phrases $HOME/.idata.phrases \
+			 | ifile -k -S -w -m 100000 -i spam \
+			 && cat >/dev/null
+			:0cw:$HOME/.bogofilter.lock
+			*!^x-bogosity: *spam
+			*?which bogofilter
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | bogofilter --multi-token-count=2 -s \
+			 && cat >/dev/null
+			#:Acw:$HOME/.bogofilter1.lock
+			#|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			# | bogofilter -d $HOME/.bogofilter1 -s \
+			# && cat >/dev/null
+			:0c
+			*^x-spamprobe:
+			*^x-spamprobe: *spam
+			/dev/null
+			:Ecw:$HOME/.spamprobe.lock
+			*?which spamprobe
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | spamprobe -Y -Hall train-spam \
+			 && cat >/dev/null
+			:0c
+			*^x-dspam:
+			*^x-dspam[^:]*:.*\<spam
+			/dev/null
+			:Ecw:$HOME/.dspam.lock
+			*?which dspam
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | dspam --user $LOGNAME --stdout --source=corpus --class=spam \
+			 && cat >/dev/null
+			:0c
+			*^x-spambayes
+			*^x-spambayes[^:]*: *spam
+			/dev/null
+			:Ecw:$HOME/.hammiedb.lock
+			*?which sb_filter.py
+			|head -c 100000 | formail -f -b -Y -q- $HDRFILT \
+			 | sb_filter.py -s \
+			 && cat >/dev/null
+			:0hcw:$SPAMMESSIDS.lock
+			*!HASH??^^^^
+			|formail -f -q- -I "Message-ID: <$HASH@unknown>"  </dev/null \
+		            | formail -D 122880 $SPAMMESSIDS; \
+			    cat >/dev/null
+			:0hcw:$SPAMMESSIDS.lock
+			|formail -D 122880 $SPAMMESSIDS; exit 0
+			:0:
+			$PROCMAIL_TRASH
+		}
+	}
+	FROM_MAILER_DAEMON
+	MATCH
+	# don't clobber TRAP -- 3/20/2012
+	#:0w
+	#*!ORIGTRAP??^^^^
+	#{ TRAP=$ORIGTRAP }
+	ORIGTRAP
+	LOCKFILE
+	:0w
+	*SCORE??^[12]$
+	|formail -f -b -Y -q- -A "X-Precedence: junk-mail" -i "Priority: $PRIORITY" \
+	 | procmail_hscore $SCORE
+	:0fwh
+	|formail -q- -A "X-score: $SCORE" -A "X-nastiness: $NASTINESS"
+	VERBOSE=no
+}
+:Efwh
+|formail -q- -A "X-header-match: $FROM"
+
+REPEATED
+
+:0hcw:$TRASHDIR/procmail_junk.messids.lock
+|formail -D 122880 $TRASHDIR/procmail_junk.messids; exit 0
+:0hcw:$TRASHDIR/procmail_junk.messids.lock
+*!HASH??^^^^
+|formail -f -q- -I "Message-ID: <$HASH@unknown>" </dev/null \
+           | formail -D 122880 $TRASHDIR/procmail_junk.messids; \
+    cat >/dev/null
+:afhw:
+|formail -q- -i "X-HASH-Message-Id: <$HASH@unknown>"
+
+:0fwh
+|formail -q- -i "Priority: $PRIORITY"
